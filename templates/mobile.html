@@ -196,12 +196,23 @@
   }
 
   .pane {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
     font: 500 14px/1.5 var(--mono);
     color: #eeece6;
     min-height: min-content;
+  }
+
+  .pane-block {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .pane-block + .pane-block {
+    margin-top: 1em;
+  }
+
+  .pane-block.user {
+    color: #10a37f;
   }
 
   .pane-empty {
@@ -231,39 +242,15 @@
     margin-top: 5px;
   }
 
-  .smart-actions-shell {
-    display: grid;
-    gap: 8px;
-  }
-
-  .smart-actions-shell.hidden {
-    display: none;
-  }
-
-  .smart-actions-label {
-    font: 700 11px/1 var(--mono);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-  }
-
-  .smart-actions-row {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .smart-actions-row::-webkit-scrollbar {
-    display: none;
-  }
-
   .tool-row,
   .nav-row,
   .input-row {
     display: flex;
     gap: 8px;
     align-items: center;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
   }
 
   .input-row {
@@ -324,6 +311,9 @@
   .controls-body {
     display: grid;
     gap: 8px;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
   }
 
   .controls-shell.collapsed .controls-body {
@@ -333,6 +323,7 @@
   .tool-row,
   .nav-row {
     overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: none;
   }
 
@@ -399,7 +390,7 @@
     border-radius: 10px;
     color: var(--text);
     padding: 10px 11px;
-    font: 500 15px/1.35 var(--sans);
+    font: 500 16px/1.35 var(--sans);
     outline: none;
     transition: border-color 0.16s ease, box-shadow 0.16s ease;
   }
@@ -534,9 +525,24 @@
       padding: 12px;
     }
 
+    .tool-row,
+    .nav-row {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      overflow: visible;
+    }
+
     .tool-row { grid-area: tools; }
     .nav-row { grid-area: nav; }
     .input-row { grid-area: input; }
+
+    .tool-row .chip-btn,
+    .nav-row .chip-btn {
+      width: 100%;
+      min-width: 0;
+      padding: 0 8px;
+    }
 
     .composer-input {
       min-height: 64px;
@@ -589,6 +595,7 @@
           <button class="chip-btn danger-btn" data-key="C-c">^C</button>
           <button class="chip-btn" data-action="paste">Paste</button>
               <button class="chip-btn enter-btn" data-key="Enter">Enter</button>
+              <button class="chip-btn" data-scroll="end">PgEnd</button>
             </div>
 
             <div class="nav-row">
@@ -600,11 +607,6 @@
               <button class="chip-btn" data-scroll="down">PgDn</button>
             </div>
           </div>
-        </div>
-
-        <div class="smart-actions-shell hidden" id="smart-actions-shell">
-          <div class="smart-actions-label">Suggested actions</div>
-          <div class="smart-actions-row" id="smart-actions-row"></div>
         </div>
 
         <div class="input-row">
@@ -636,12 +638,12 @@
   var composerShell = document.querySelector('.composer-shell');
   var controlsShell = document.getElementById('controls-shell');
   var controlsToggle = document.getElementById('controls-toggle');
-  var smartActionsShell = document.getElementById('smart-actions-shell');
-  var smartActionsRow = document.getElementById('smart-actions-row');
   var lastText = "";
   var lastCursorY = null;
   var pollTimer = null;
   var hasLoadedOnce = false;
+  var pendingSubmittedText = '';
+  var pendingInputSnapshot = '';
   var SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   var recognition = null;
   var recognitionBaseText = '';
@@ -712,92 +714,48 @@
     return parts.length > 2 ? '…/' + tail : tail;
   }
 
-  function makeAction(label, steps, primary) {
-    return { label: label, steps: steps, primary: !!primary };
-  }
+  function renderPaneText(text) {
+    pane.innerHTML = '';
 
-  function extractSmartActions(text, cursorY) {
-    if (!text) return [];
-
-    var rawLines = text.split(/\r?\n/);
-    var endLine = typeof cursorY === 'number' && cursorY >= 0
-      ? Math.min(rawLines.length, cursorY + 1)
-      : rawLines.length;
-    var startLine = typeof cursorY === 'number' && cursorY >= 0
-      ? Math.max(0, endLine - 8)
-      : 0;
-    var scopedLines = rawLines.slice(startLine, endLine);
-    var scopedText = scopedLines.join('\n');
-
-    var trimmedLines = scopedLines
-      .map(function(line) { return line.trim(); })
-      .filter(Boolean);
-
-    var options = trimmedLines
-      .map(function(line) {
-        var match = line.match(/^([›>])?\s*([0-9]+|[A-Za-z])[.)]\s+(.+)$/);
-        if (!match) return null;
-        return {
-          selected: !!match[1],
-          token: match[2],
-          label: match[3].trim()
-        };
-      })
-      .filter(Boolean);
-
-    var pressEnter = /press enter to continue/i.test(scopedText);
-    if (options.length >= 2 && options.length <= 5) {
-      return options.slice(0, 4).map(function(option, index) {
-        return makeAction(
-          option.token + '. ' + option.label,
-          [{ text: option.token }, { key: 'Enter' }],
-          option.selected || index === 0
-        );
-      });
-    }
-
-    var yesNoMatch = scopedText.match(/[\[(]([YyNn])\/([YyNn])[\])]/);
-    if (yesNoMatch) {
-      var first = yesNoMatch[1].toLowerCase();
-      var second = yesNoMatch[2].toLowerCase();
-      return [
-        makeAction(first === 'y' ? 'Yes' : 'No', [{ text: first }, { key: 'Enter' }], true),
-        makeAction(second === 'n' ? 'No' : 'Yes', [{ text: second }, { key: 'Enter' }], false)
-      ];
-    }
-
-    if (pressEnter) {
-      return [makeAction('Continue', [{ key: 'Enter' }], true)];
-    }
-
-    return [];
-  }
-
-  function renderSmartActions(text, cursorY) {
-    if (!smartActionsShell || !smartActionsRow) return;
-
-    var actions = extractSmartActions(text, cursorY);
-    smartActionsRow.innerHTML = '';
-
-    if (!actions.length) {
-      smartActionsShell.classList.add('hidden');
-      syncViewportHeight();
+    if (!text) {
+      pane.textContent = 'Waiting for terminal output…';
+      pane.classList.add('pane-empty');
       return;
     }
 
-    actions.forEach(function(action) {
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.className = action.primary ? 'chip-btn enter-btn' : 'chip-btn';
-      button.textContent = action.label;
-      button.addEventListener('click', function() {
-        runSteps(action.steps, action.label);
-      });
-      smartActionsRow.appendChild(button);
-    });
+    pane.classList.remove('pane-empty');
 
-    smartActionsShell.classList.remove('hidden');
-    syncViewportHeight();
+    var blocks = text.split(/\n{2,}/);
+    blocks.forEach(function(block) {
+      var el = document.createElement('div');
+      el.className = 'pane-block';
+      if (block.trim().startsWith('›')) {
+        el.classList.add('user');
+      }
+      el.textContent = block;
+      pane.appendChild(el);
+    });
+  }
+
+  function normalizeMatchText(text) {
+    return (text || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function maybeClearPendingInput(nextText) {
+    if (!pendingSubmittedText) return;
+    if (input.value !== pendingInputSnapshot) return;
+
+    var sent = normalizeMatchText(pendingSubmittedText);
+    var paneText = normalizeMatchText(nextText);
+    if (!sent || !paneText.includes(sent)) return;
+
+    input.value = '';
+    pendingSubmittedText = '';
+    pendingInputSnapshot = '';
+    autoResize();
+    input.focus();
   }
 
   async function fetchPane(forceStick) {
@@ -810,18 +768,16 @@
         pane.textContent = 'Session not found. Go back and reopen it.';
         pane.classList.add('pane-empty');
         setUpdatedTime(null);
-        renderSmartActions('', null);
         return;
       }
 
       var nextText = data.text || '';
       var nextCursorY = typeof data.cursor_y === 'number' ? data.cursor_y : null;
       if (nextText !== lastText || nextCursorY !== lastCursorY) {
-        pane.textContent = nextText || 'Waiting for terminal output…';
-        pane.classList.toggle('pane-empty', !nextText);
+        renderPaneText(nextText);
+        maybeClearPendingInput(nextText);
         lastText = nextText;
         lastCursorY = nextCursorY;
-        renderSmartActions(nextText, nextCursorY);
       }
       cwdLabel.textContent = formatPathTail(data.cwd || '');
       setUpdatedTime(data.updated);
@@ -869,10 +825,21 @@
     await runSteps([{ key: key }], key);
   }
 
-  async function scrollPane(direction) {
-    var ok = await postJson('/api/scroll/' + encodeURIComponent(SESSION), { direction: direction });
-    showStatus(ok ? 'Scrolled ' + direction : 'Scroll failed');
-    setTimeout(function() { fetchPane(false); }, 120);
+  function scrollPane(direction) {
+    if (!paneWrap) return;
+    if (direction === 'end') {
+      paneWrap.scrollTo({
+        top: paneWrap.scrollHeight,
+        behavior: 'smooth'
+      });
+      return;
+    }
+    var amount = Math.max(120, Math.floor(paneWrap.clientHeight * 0.82));
+    var delta = direction === 'up' ? -amount : amount;
+    paneWrap.scrollBy({
+      top: delta,
+      behavior: 'smooth'
+    });
   }
 
   async function sendText(withEnter) {
@@ -889,9 +856,8 @@
 
     showStatus(ok ? 'Sent to Codex' : 'Send failed');
     if (ok) {
-      input.value = '';
-      autoResize();
-      input.focus();
+      pendingSubmittedText = text;
+      pendingInputSnapshot = input.value;
       setTimeout(function() { fetchPane(true); }, 120);
     }
   }
