@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Capture card labeling** — infer repo/workspace names for running Codex desktop and Cursor sessions so the dashboard shows project context instead of bare PIDs with `/`
 - **Mobile prompt actions** — detect common terminal prompts like numbered menus, `y/n`, and `Press enter` so iPhone/iPad can surface tap targets instead of forcing keyboard input
 - **Mobile dictation and composer sizing** — keep the send row compact during iOS keyboard changes and add a mic entry point that falls back to the native iPhone keyboard dictation path
 - **iPhone and iPad mobile shell** — route iOS devices to a touch-first session view with live tmux snapshots, a fixed composer, and raw-terminal fallback instead of the desktop ttyd layout

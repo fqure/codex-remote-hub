@@ -16,6 +16,7 @@ import shutil
 import socket
 import glob as _glob
 import platform as _platform
+import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import unquote, parse_qs, urlparse
@@ -234,6 +235,81 @@ def _get_process_cwd(pid: int) -> Optional[str]:
         except (FileNotFoundError, PermissionError, OSError):
             pass
     return None
+
+
+def _get_repo_root(path: str) -> Optional[str]:
+    """Return the enclosing git repo root for a path, if one exists."""
+    git = shutil.which("git")
+    if not git or not path or not os.path.isdir(path):
+        return None
+    try:
+        out = subprocess.check_output(
+            [git, "-C", path, "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    if out and os.path.isdir(out):
+        return os.path.realpath(out)
+    return None
+
+
+def _extract_workspace_name(command: str) -> Optional[str]:
+    """Extract a workspace name from editor extension-host process labels."""
+    match = re.search(r"extension-host \([^)]+\) (.+?) \[\d+-\d+\]\s*$", command)
+    if not match:
+        return None
+    workspace = match.group(1).strip()
+    return workspace or None
+
+
+def _resolve_workspace_cwd(workspace_name: str) -> Optional[str]:
+    """Resolve a workspace name back to a repo/folder under the dev root."""
+    if not workspace_name:
+        return None
+
+    search_roots = []
+    for base in [
+        DEV_ROOT,
+        os.path.expanduser("~/Documents/GitHub"),
+        os.path.expanduser("~/Projects"),
+    ]:
+        real_base = os.path.realpath(base)
+        if os.path.isdir(real_base) and real_base not in search_roots:
+            search_roots.append(real_base)
+
+    matches: set[str] = set()
+    for base in search_roots:
+        direct_match = os.path.join(base, workspace_name)
+        if os.path.isdir(direct_match):
+            matches.add(os.path.realpath(direct_match))
+            continue
+
+        try:
+            for entry in os.scandir(base):
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                if entry.name == workspace_name:
+                    matches.add(os.path.realpath(entry.path))
+                    continue
+                nested_match = os.path.join(entry.path, workspace_name)
+                if os.path.isdir(nested_match):
+                    matches.add(os.path.realpath(nested_match))
+        except OSError:
+            continue
+
+    if len(matches) == 1:
+        return next(iter(matches))
+    return None
+
+
+def _friendly_process_source(command: str) -> str:
+    """Return a short source label when no repo/folder context can be inferred."""
+    if "Cursor" in command or ".cursor/" in command:
+        return "Cursor"
+    if "Codex.app" in command:
+        return "Codex"
+    return "Codex CLI"
 
 
 def _find_latest_session_id(cwd: str) -> Optional[str]:
@@ -467,18 +543,29 @@ def discover_capturable_sessions() -> list:
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
 
-    capturable = []
+    process_rows: dict[int, dict] = {}
     for line in ps_out.strip().split("\n")[1:]:
         parts = line.split(None, 3)
         if len(parts) < 4:
             continue
         try:
             pid = int(parts[0])
+            ppid = int(parts[1])
         except ValueError:
             continue
+        process_rows[pid] = {
+            "pid": pid,
+            "ppid": ppid,
+            "tty": parts[2],
+            "command": parts[3],
+        }
 
-        tty = parts[2]
-        command = parts[3]
+    capturable = []
+    for proc in process_rows.values():
+        pid = proc["pid"]
+        ppid = proc["ppid"]
+        tty = proc["tty"]
+        command = proc["command"]
 
         # Skip processes inside tmux
         if pid in tmux_tree_pids:
@@ -493,7 +580,25 @@ def discover_capturable_sessions() -> list:
         if not cwd:
             continue
 
-        project_name = os.path.basename(cwd)
+        repo_root = _get_repo_root(cwd) if cwd != "/" else None
+        if repo_root:
+            cwd = repo_root
+
+        project_name = os.path.basename(cwd.rstrip(os.sep)) if cwd not in {"", "/"} else ""
+        parent_command = process_rows.get(ppid, {}).get("command", "")
+
+        if not project_name:
+            workspace_name = _extract_workspace_name(parent_command)
+            if workspace_name:
+                inferred_cwd = _resolve_workspace_cwd(workspace_name)
+                if inferred_cwd:
+                    repo_root = _get_repo_root(inferred_cwd) or inferred_cwd
+                    cwd = repo_root
+                project_name = workspace_name
+
+        if not project_name:
+            project_name = _friendly_process_source(command)
+
         session_id = _find_latest_session_id(cwd)
 
         capturable.append({

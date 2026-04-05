@@ -963,11 +963,16 @@
 
         var metaDiv = document.createElement('div');
         metaDiv.className = 'card-meta';
-        var shortCwd = s.cwd.replace(/^\/Users\/[^/]+/, '~');
-        if (shortCwd.length > 30) {
-          shortCwd = shortCwd.slice(0, 12) + '\u2026' + shortCwd.slice(-15);
+        var metaLabel = s.cwd || '';
+        if (metaLabel === '/' || !metaLabel) {
+          metaLabel = 'workspace unknown';
+        } else {
+          metaLabel = metaLabel.replace(/^\/Users\/[^/]+/, '~');
+          if (metaLabel.length > 30) {
+            metaLabel = metaLabel.slice(0, 12) + '\u2026' + metaLabel.slice(-15);
+          }
         }
-        metaDiv.textContent = 'PID ' + s.pid + ' \u00b7 ' + shortCwd;
+        metaDiv.textContent = 'PID ' + s.pid + ' \u00b7 ' + metaLabel;
 
         info.appendChild(nameDiv);
         info.appendChild(metaDiv);
