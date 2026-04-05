@@ -20,6 +20,13 @@ NC='\033[0m'
 INSTALL_DIR="$HOME/.codex-remote-hub"
 HUB_PORT=7690
 LABEL="com.codex-remote-hub.server"
+DEV_ROOT_INPUT="${CODEX_DEV_ROOT:-$HOME/Projects}"
+
+case "$DEV_ROOT_INPUT" in
+    "~") DEV_ROOT="$HOME" ;;
+    "~/"*) DEV_ROOT="$HOME/${DEV_ROOT_INPUT#~/}" ;;
+    *) DEV_ROOT="$DEV_ROOT_INPUT" ;;
+esac
 
 info()  { echo -e "${BLUE}i${NC}  $1"; }
 ok()    { echo -e "${GREEN}+${NC}  $1"; }
@@ -270,6 +277,8 @@ case "$OS" in
         <string>${HUB_PORT}</string>
         <key>CODEX_REMOTE_HUB_DIR</key>
         <string>${INSTALL_DIR}</string>
+        <key>CODEX_DEV_ROOT</key>
+        <string>${DEV_ROOT}</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -305,6 +314,7 @@ Environment=TTYD_BIN=${TTYD_PATH}
 Environment=CODEX_BIN=${CODEX_PATH}
 Environment=CODEX_REMOTE_HUB_PORT=${HUB_PORT}
 Environment=CODEX_REMOTE_HUB_DIR=${INSTALL_DIR}
+Environment=CODEX_DEV_ROOT=${DEV_ROOT}
 StandardOutput=append:${INSTALL_DIR}/hub.log
 StandardError=append:${INSTALL_DIR}/hub-error.log
 
@@ -530,6 +540,9 @@ fi
 
 echo -e " ${BOLD}Local access:${NC}"
 echo -e "   ${PROTO}://localhost:${HUB_PORT}"
+echo ""
+echo -e " ${BOLD}Folder picker root:${NC}"
+echo -e "   ${DEV_ROOT}"
 echo ""
 
 # Re-detect Tailscale hostname if not already set

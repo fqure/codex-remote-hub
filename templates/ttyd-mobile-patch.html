@@ -1,0 +1,323 @@
+<!-- codex-remote-hub-mobile-v1 -->
+<style id="codex-remote-hub-mobile-style">
+  :root {
+    --codex-mobile-scale: 1.28;
+    --codex-mobile-bar-height: 0px;
+    --codex-mobile-height: 100dvh;
+    --codex-mobile-bg: #0a0a0f;
+    --codex-mobile-surface: rgba(19, 19, 26, 0.96);
+    --codex-mobile-border: #252530;
+    --codex-mobile-text: #e4e2db;
+    --codex-mobile-dim: #8f8d89;
+    --codex-mobile-accent: #10a37f;
+    --codex-mobile-danger: #ef4444;
+  }
+
+  body.codex-mobile-optimized,
+  html.codex-mobile-optimized {
+    background: var(--codex-mobile-bg);
+    overscroll-behavior: none;
+  }
+
+  body.codex-mobile-optimized #terminal-container {
+    height: calc((var(--codex-mobile-height) - var(--codex-mobile-bar-height)) / var(--codex-mobile-scale)) !important;
+    width: calc(100% / var(--codex-mobile-scale)) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: scale(var(--codex-mobile-scale));
+    transform-origin: top left;
+  }
+
+  body.codex-mobile-optimized #terminal-container .terminal {
+    height: 100% !important;
+    padding: 0 !important;
+  }
+
+  body.codex-mobile-optimized .xterm-viewport {
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+
+  body.codex-mobile-optimized .xterm-viewport::-webkit-scrollbar {
+    display: none;
+  }
+
+  body.codex-mobile-optimized .xterm .xterm-helper-textarea {
+    left: 0 !important;
+    top: 0 !important;
+    width: 1px !important;
+    height: 1px !important;
+    opacity: 0.01 !important;
+    z-index: 4 !important;
+  }
+
+  #codex-mobile-toolbar {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9999;
+    gap: 8px;
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+    background: var(--codex-mobile-surface);
+    border-top: 1px solid var(--codex-mobile-border);
+    backdrop-filter: blur(18px);
+  }
+
+  body.codex-mobile-optimized #codex-mobile-toolbar {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .codex-mobile-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .codex-mobile-btn,
+  .codex-mobile-send,
+  .codex-mobile-zoom {
+    min-height: 40px;
+    border-radius: 11px;
+    border: 1px solid var(--codex-mobile-border);
+    background: #11131c;
+    color: var(--codex-mobile-text);
+    font: 600 15px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    padding: 0 12px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .codex-mobile-btn:active,
+  .codex-mobile-send:active,
+  .codex-mobile-zoom:active {
+    transform: scale(0.96);
+  }
+
+  .codex-mobile-btn.key-enter,
+  .codex-mobile-send {
+    background: rgba(16, 163, 127, 0.18);
+    border-color: rgba(16, 163, 127, 0.45);
+    color: #d9fff4;
+  }
+
+  .codex-mobile-btn.key-danger {
+    color: #ffd6d6;
+    border-color: rgba(239, 68, 68, 0.45);
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  .codex-mobile-compose {
+    flex: 1;
+    min-width: 0;
+    min-height: 40px;
+    border-radius: 11px;
+    border: 1px solid var(--codex-mobile-border);
+    background: #0f1118;
+    color: var(--codex-mobile-text);
+    font: 500 16px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    padding: 10px 12px;
+  }
+
+  .codex-mobile-compose::placeholder {
+    color: var(--codex-mobile-dim);
+  }
+
+  .codex-mobile-status {
+    min-width: 42px;
+    text-align: center;
+    color: var(--codex-mobile-dim);
+    font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+</style>
+<script>
+  (function () {
+    if (window.__codexRemoteHubMobilePatch) return;
+    window.__codexRemoteHubMobilePatch = true;
+
+    var touchDevice = window.matchMedia("(pointer: coarse)").matches || (navigator.maxTouchPoints || 0) > 0;
+    if (!touchDevice) return;
+
+    document.documentElement.classList.add("codex-mobile-optimized");
+    document.body.classList.add("codex-mobile-optimized");
+
+    var hash = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+    var hubOrigin = hash.get("hub") ? decodeURIComponent(hash.get("hub")) : "";
+    var session = hash.get("session") ? decodeURIComponent(hash.get("session")) : "";
+    var storageKey = "codex-mobile-scale";
+    var scale = parseFloat(localStorage.getItem(storageKey) || "1.28");
+    if (!Number.isFinite(scale)) scale = 1.28;
+
+    function setScale(next) {
+      scale = Math.min(1.6, Math.max(1, next));
+      document.documentElement.style.setProperty("--codex-mobile-scale", scale.toFixed(2));
+      try { localStorage.setItem(storageKey, scale.toFixed(2)); } catch (e) {}
+      if (scaleValue) scaleValue.textContent = Math.round(scale * 100) + "%";
+      updateViewport();
+    }
+
+    function focusTerminal() {
+      var xterm = document.querySelector(".xterm");
+      var textarea = document.querySelector(".xterm-helper-textarea");
+      if (xterm && typeof xterm.click === "function") xterm.click();
+      if (textarea && typeof textarea.focus === "function") {
+        textarea.focus({ preventScroll: true });
+      } else if (xterm && typeof xterm.focus === "function") {
+        xterm.focus({ preventScroll: true });
+      }
+    }
+
+    function updateViewport() {
+      var height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      document.documentElement.style.setProperty("--codex-mobile-height", height + "px");
+      if (toolbar) {
+        document.documentElement.style.setProperty("--codex-mobile-bar-height", toolbar.offsetHeight + "px");
+      }
+    }
+
+    async function callHub(path, payload) {
+      if (!hubOrigin || !session) return false;
+      try {
+        var res = await fetch(hubOrigin + path + encodeURIComponent(session), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        return res.ok;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    async function sendKey(key) {
+      var ok = await callHub("/api/send-keys/", { key: key });
+      flash(ok ? "" : "!");
+      focusTerminal();
+    }
+
+    async function sendText(text, withEnter) {
+      if (!text) {
+        if (withEnter) await sendKey("Enter");
+        return;
+      }
+
+      var ok = await callHub("/api/send-text/", { text: text });
+      if (ok && withEnter) ok = await callHub("/api/send-keys/", { key: "Enter" });
+      flash(ok ? "" : "!");
+      if (ok && compose) compose.value = "";
+      focusTerminal();
+    }
+
+    async function pasteClipboard() {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        flash("!");
+        return;
+      }
+      try {
+        var text = await navigator.clipboard.readText();
+        await sendText(text, false);
+      } catch (e) {
+        flash("!");
+      }
+    }
+
+    function flash(value) {
+      if (!statusValue) return;
+      statusValue.textContent = value || Math.round(scale * 100) + "%";
+      clearTimeout(flash.timer);
+      flash.timer = setTimeout(function () {
+        statusValue.textContent = Math.round(scale * 100) + "%";
+      }, 900);
+    }
+
+    function makeButton(label, className, onClick) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "codex-mobile-btn" + (className ? " " + className : "");
+      btn.textContent = label;
+      btn.addEventListener("click", onClick);
+      return btn;
+    }
+
+    var toolbar = document.createElement("div");
+    toolbar.id = "codex-mobile-toolbar";
+
+    var topRow = document.createElement("div");
+    topRow.className = "codex-mobile-row";
+    topRow.appendChild(makeButton("Esc", "", function () { sendKey("Escape"); }));
+    topRow.appendChild(makeButton("Tab", "", function () { sendKey("Tab"); }));
+    topRow.appendChild(makeButton("^C", "key-danger", function () { sendKey("C-c"); }));
+    topRow.appendChild(makeButton("Paste", "", function () { pasteClipboard(); }));
+
+    var zoomOut = document.createElement("button");
+    zoomOut.type = "button";
+    zoomOut.className = "codex-mobile-zoom";
+    zoomOut.textContent = "-";
+    zoomOut.addEventListener("click", function () { setScale(scale - 0.08); });
+    topRow.appendChild(zoomOut);
+
+    var statusValue = document.createElement("div");
+    statusValue.className = "codex-mobile-status";
+    topRow.appendChild(statusValue);
+
+    var zoomIn = document.createElement("button");
+    zoomIn.type = "button";
+    zoomIn.className = "codex-mobile-zoom";
+    zoomIn.textContent = "+";
+    zoomIn.addEventListener("click", function () { setScale(scale + 0.08); });
+    topRow.appendChild(zoomIn);
+
+    topRow.appendChild(makeButton("Enter", "key-enter", function () { sendKey("Enter"); }));
+
+    var navRow = document.createElement("div");
+    navRow.className = "codex-mobile-row";
+    navRow.appendChild(makeButton("Left", "", function () { sendKey("Left"); }));
+    navRow.appendChild(makeButton("Up", "", function () { sendKey("Up"); }));
+    navRow.appendChild(makeButton("Down", "", function () { sendKey("Down"); }));
+    navRow.appendChild(makeButton("Right", "", function () { sendKey("Right"); }));
+
+    var compose = document.createElement("input");
+    compose.type = "text";
+    compose.className = "codex-mobile-compose";
+    compose.placeholder = "Type here if terminal input gets stuck";
+    compose.autocapitalize = "off";
+    compose.autocorrect = "off";
+    compose.spellcheck = false;
+    compose.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        sendText(compose.value, true);
+      }
+    });
+    navRow.appendChild(compose);
+
+    var sendButton = document.createElement("button");
+    sendButton.type = "button";
+    sendButton.className = "codex-mobile-send";
+    sendButton.textContent = "Send";
+    sendButton.addEventListener("click", function () {
+      sendText(compose.value, true);
+    });
+    navRow.appendChild(sendButton);
+
+    toolbar.appendChild(topRow);
+    toolbar.appendChild(navRow);
+    document.body.appendChild(toolbar);
+
+    var scaleValue = statusValue;
+    setScale(scale);
+    updateViewport();
+    focusTerminal();
+
+    document.body.addEventListener("click", function () {
+      focusTerminal();
+    }, true);
+
+    window.addEventListener("resize", updateViewport);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", updateViewport);
+      window.visualViewport.addEventListener("scroll", updateViewport);
+    }
+  })();
+</script>

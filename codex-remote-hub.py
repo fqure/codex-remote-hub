@@ -19,6 +19,7 @@ import platform as _platform
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import unquote, parse_qs, urlparse
+from urllib.request import urlopen
 from datetime import datetime
 
 VERSION = "1.0.0"
@@ -73,8 +74,84 @@ IGNORED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".tox",
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _template_cache: dict[str, str] = {}
+TTYD_PATCH_MARKER = "codex-remote-hub-mobile-v1"
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _ssl_cert_paths() -> tuple[str, str]:
+    """Return the configured certificate and key paths."""
+    return (
+        os.path.join(INSTALL_DIR, "hub.crt"),
+        os.path.join(INSTALL_DIR, "hub.key"),
+    )
+
+
+def _has_ssl_certs() -> bool:
+    """Return True when HTTPS certificates are available for the hub and ttyd."""
+    cert_file, key_file = _ssl_cert_paths()
+    return os.path.exists(cert_file) and os.path.exists(key_file)
+
+
+def _find_free_port() -> int:
+    """Reserve and return an available localhost TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _fetch_default_ttyd_index() -> Optional[str]:
+    """Fetch ttyd's built-in index.html by starting a short-lived local instance."""
+    port = _find_free_port()
+    proc = subprocess.Popen(
+        [TTYD_BIN, "-p", str(port), "/bin/sh", "-lc", "sleep 30"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                return None
+            if _port_in_use_socket(port):
+                break
+            time.sleep(0.1)
+        else:
+            return None
+
+        with urlopen(f"http://127.0.0.1:{port}", timeout=2) as response:
+            return response.read().decode("utf-8", "replace")
+    except Exception:
+        return None
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=1)
+
+
+def _ensure_ttyd_index() -> None:
+    """Generate a patched ttyd index with mobile controls if needed."""
+    index_path = os.path.join(INSTALL_DIR, "ttyd-index.html")
+    try:
+        if os.path.exists(index_path):
+            with open(index_path, "r", encoding="utf-8", errors="ignore") as f:
+                if TTYD_PATCH_MARKER in f.read():
+                    return
+
+        patch = _load_template("ttyd-mobile-patch.html")
+        default_html = _fetch_default_ttyd_index()
+        if not default_html or "</body>" not in default_html:
+            return
+
+        patched = default_html.replace("</body>", patch + "\n</body>", 1)
+        with open(index_path, "w", encoding="utf-8") as f:
+            f.write(patched)
+    except OSError:
+        pass
 
 
 def _check_dependencies() -> list[str]:
@@ -514,6 +591,9 @@ def _start_ttyd(session: str, port: int) -> None:
             return
         # Port occupied by ttyd for a different/dead session; reclaim it
         _kill_ttyd_on_port(port)
+
+    _ensure_ttyd_index()
+
     ttyd_cmd = [
         TTYD_BIN, "-W", "-p", str(port),
         "--ping-interval", "5",
@@ -527,9 +607,8 @@ def _start_ttyd(session: str, port: int) -> None:
         ttyd_cmd += ["-I", custom_index]
 
     # HTTPS: use certs if available
-    cert_file = os.path.join(INSTALL_DIR, "hub.crt")
-    key_file = os.path.join(INSTALL_DIR, "hub.key")
-    if os.path.exists(cert_file) and os.path.exists(key_file):
+    cert_file, key_file = _ssl_cert_paths()
+    if _has_ssl_certs():
         ttyd_cmd += ["-S", "-C", cert_file, "-K", key_file]
 
     ttyd_cmd += ["tmux", "attach-session", "-t", session]
@@ -725,9 +804,69 @@ def render_hub(host: str) -> str:
 
 def render_terminal(name: str, port: int, host: str) -> str:
     """Render the terminal wrapper page."""
-    terminal_url = f"https://{host}:{port}"
+    scheme = "https" if _has_ssl_certs() else "http"
+    terminal_url = f"{scheme}://{host}:{port}"
     html = _load_template("terminal.html")
     return html.replace("{{SESSION_NAME}}", name).replace("{{TERMINAL_URL}}", terminal_url)
+
+
+def render_mobile_terminal(name: str, port: int, host: str) -> str:
+    """Render the mobile-first terminal shell for iPhone/iPad."""
+    scheme = "https" if _has_ssl_certs() else "http"
+    terminal_url = f"{scheme}://{host}:{port}"
+    html = _load_template("mobile.html")
+    return (html
+            .replace("{{SESSION_NAME}}", name)
+            .replace("{{TERMINAL_URL}}", terminal_url))
+
+
+def get_pane_snapshot(name: str, lines: int = 160) -> dict:
+    """Return a plain-text snapshot of the tmux pane for mobile rendering."""
+    session = _session_name(name)
+    lines = max(40, min(lines, 400))
+
+    has_session = subprocess.run(
+        [TMUX_BIN, "has-session", "-t", session],
+        capture_output=True
+    )
+    if has_session.returncode != 0:
+        return {"ok": False, "missing": True}
+
+    capture = subprocess.run(
+        [TMUX_BIN, "capture-pane", "-p", "-J", "-t", session, "-S", "-", "-E", "-"],
+        capture_output=True, text=True
+    )
+    path_proc = subprocess.run(
+        [TMUX_BIN, "display-message", "-p", "-t", session, "#{pane_current_path}"],
+        capture_output=True, text=True
+    )
+    title_proc = subprocess.run(
+        [TMUX_BIN, "display-message", "-p", "-t", session, "#{session_name}"],
+        capture_output=True, text=True
+    )
+    mode_proc = subprocess.run(
+        [TMUX_BIN, "display-message", "-p", "-t", session, "#{pane_in_mode}"],
+        capture_output=True, text=True
+    )
+    cursor_proc = subprocess.run(
+        [TMUX_BIN, "display-message", "-p", "-t", session, "#{cursor_y}"],
+        capture_output=True, text=True
+    )
+
+    text = capture.stdout if capture.returncode == 0 else ""
+    try:
+        cursor_y = int(cursor_proc.stdout.strip())
+    except (TypeError, ValueError):
+        cursor_y = None
+    return {
+        "ok": True,
+        "text": text,
+        "cwd": path_proc.stdout.strip() if path_proc.returncode == 0 else "",
+        "title": title_proc.stdout.strip() if title_proc.returncode == 0 else name,
+        "copy_mode": mode_proc.stdout.strip() == "1",
+        "cursor_y": cursor_y,
+        "updated": int(time.time() * 1000),
+    }
 
 
 # ─── HTTP Handler ────────────────────────────────────────────────────────────
@@ -784,6 +923,24 @@ class HubHandler(BaseHTTPRequestHandler):
             self.wfile.write(html.encode())
             return
 
+        # Mobile-first terminal shell
+        if path.startswith("/mobile/"):
+            name = path.split("/mobile/")[1].strip("/")
+            if not name:
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.end_headers()
+                return
+            port = port_for_name(name)
+            host = self.headers.get("Host", "localhost").split(":")[0]
+            html = render_mobile_terminal(name, port, host)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(html.encode())
+            return
+
         # Stop session
         if path.startswith("/stop/"):
             name = path.split("/stop/")[1].strip("/")
@@ -812,6 +969,21 @@ class HubHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store")
             self.end_headers()
             self.wfile.write(json.dumps({"ready": ready, "port": port}).encode())
+            return
+
+        # API: pane snapshot for mobile view
+        if path.startswith("/api/pane/"):
+            name = path.split("/api/pane/")[1].strip("/")
+            try:
+                lines = int(qs.get("lines", ["160"])[0])
+            except (ValueError, IndexError):
+                lines = 160
+            data = get_pane_snapshot(name, lines)
+            self.send_response(200 if data.get("ok") else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode())
             return
 
         # API: list capturable sessions (JSON)
@@ -1089,12 +1261,9 @@ def cmd_start():
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
-    proto = "http"
-    cert_file = os.path.join(INSTALL_DIR, "hub.crt")
-    key_file = os.path.join(INSTALL_DIR, "hub.key")
-    has_ssl = os.path.exists(cert_file) and os.path.exists(key_file)
-    if has_ssl:
-        proto = "https"
+    cert_file, key_file = _ssl_cert_paths()
+    has_ssl = _has_ssl_certs()
+    proto = "https" if has_ssl else "http"
 
     platform_label = PLATFORM
     if IS_WSL:
