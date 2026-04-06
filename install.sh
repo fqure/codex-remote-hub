@@ -21,11 +21,18 @@ INSTALL_DIR="$HOME/.codex-remote-hub"
 HUB_PORT=7690
 LABEL="com.codex-remote-hub.server"
 DEV_ROOT_INPUT="${CODEX_DEV_ROOT:-$HOME/Projects}"
+ASSETS_DIR_INPUT="${CODEX_REMOTE_HUB_ASSETS_DIR:-$HOME/Pictures/Screenshots}"
 
 case "$DEV_ROOT_INPUT" in
     "~") DEV_ROOT="$HOME" ;;
     "~/"*) DEV_ROOT="$HOME/${DEV_ROOT_INPUT#~/}" ;;
     *) DEV_ROOT="$DEV_ROOT_INPUT" ;;
+esac
+
+case "$ASSETS_DIR_INPUT" in
+    "~") ASSETS_DIR="$HOME" ;;
+    "~/"*) ASSETS_DIR="$HOME/${ASSETS_DIR_INPUT#~/}" ;;
+    *) ASSETS_DIR="$ASSETS_DIR_INPUT" ;;
 esac
 
 info()  { echo -e "${BLUE}i${NC}  $1"; }
@@ -207,6 +214,7 @@ fi
 step "2/6  Installing Codex Remote Hub..."
 
 mkdir -p "$INSTALL_DIR"
+mkdir -p "$ASSETS_DIR"
 
 # Detect source directory
 SRC_DIR="."
@@ -223,6 +231,11 @@ fi
 # Copy main script + templates
 cp "$SRC_DIR/codex-remote-hub.py" "$INSTALL_DIR/codex-remote-hub.py"
 chmod +x "$INSTALL_DIR/codex-remote-hub.py"
+
+if [ -f "$SRC_DIR/codex-remote-shot" ]; then
+    cp "$SRC_DIR/codex-remote-shot" "$INSTALL_DIR/codex-remote-shot"
+    chmod +x "$INSTALL_DIR/codex-remote-shot"
+fi
 
 mkdir -p "$INSTALL_DIR/templates"
 cp "$SRC_DIR/templates/"*.html "$INSTALL_DIR/templates/" 2>/dev/null
@@ -279,6 +292,8 @@ case "$OS" in
         <string>${INSTALL_DIR}</string>
         <key>CODEX_DEV_ROOT</key>
         <string>${DEV_ROOT}</string>
+        <key>CODEX_REMOTE_HUB_ASSETS_DIR</key>
+        <string>${ASSETS_DIR}</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -315,6 +330,7 @@ Environment=CODEX_BIN=${CODEX_PATH}
 Environment=CODEX_REMOTE_HUB_PORT=${HUB_PORT}
 Environment=CODEX_REMOTE_HUB_DIR=${INSTALL_DIR}
 Environment=CODEX_DEV_ROOT=${DEV_ROOT}
+Environment=CODEX_REMOTE_HUB_ASSETS_DIR=${ASSETS_DIR}
 StandardOutput=append:${INSTALL_DIR}/hub.log
 StandardError=append:${INSTALL_DIR}/hub-error.log
 

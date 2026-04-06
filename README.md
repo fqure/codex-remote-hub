@@ -194,6 +194,7 @@ All settings are optional environment variables:
 | `CODEX_REMOTE_HUB_PORT` | `7690` | Dashboard port |
 | `CODEX_FONT_SIZE` | `11` | Terminal font size |
 | `CODEX_DEV_ROOT` | `~/Projects` | Root directory for the folder picker |
+| `CODEX_REMOTE_HUB_ASSETS_DIR` | `~/Pictures/Screenshots` | Root directory for uploaded/generated images and screenshots |
 | `CODEX_REMOTE_HUB_DIR` | `~/.codex-remote-hub` | Installation directory |
 | `TTYD_BIN` | auto-detected | Path to ttyd binary |
 | `TMUX_BIN` | auto-detected | Path to tmux binary |

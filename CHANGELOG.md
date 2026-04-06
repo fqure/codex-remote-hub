@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Window screenshot chooser** — turn the mobile `Window` control into a real list of open macOS windows, use titles when macOS exposes them, and capture the selected window by CoreGraphics ID instead of opening the interactive camera picker
+- **Window picker scrolling** — make the mobile window chooser sheet and its list use touch scrolling correctly on iPhone Safari so long window lists remain reachable
+- **Focused mobile composer** — expand the phone input into a full-screen compose state when focused so Safari keyboard entry leaves more room for editing long prompts and URLs
+- **Image URL thumbnails** — preview pasted or inserted `.jpg`/`.png`-style image URLs above the composer with removable thumbnails while still sending only the URL text to the tmux session
+- **Mobile screenshot controls** — replace the low-value arrow keys with hub-native `Desk` and `Window` buttons that capture on the Mac and insert the returned asset URL into the composer without routing through Codex
+- **Configurable screenshot asset root** — preserve `CODEX_REMOTE_HUB_ASSETS_DIR` in the service config so screenshots and uploaded images can live in a user-chosen folder like `codex-remote-hub/Screenshots`
+- **Native macOS screenshot helper** — store hub images under `~/Pictures/Screenshots/<session>`, prefer the Tailscale base URL over localhost, and run macOS screenshots through Terminal so remote screenshot requests stop bouncing through raw tmux `screencapture`
+- **Dev-root screenshot instructions** — keep a managed `CODEX_DEV_ROOT/AGENTS.md` block so new hub sessions automatically know to use `codex-remote-shot` when the user asks for a screenshot
+- **Mobile image URLs** — upload camera-roll images into session storage, insert served URLs into the composer for approval, and render thread URLs as clickable links instead of using a separate image strip
+- **Session screenshot helper** — add `codex-remote-shot` so Codex sessions can capture this machine’s screen into the session asset dir and print a served hub URL back into the thread
 - **Capture card labeling** — infer repo/workspace names for running Codex desktop and Cursor sessions so the dashboard shows project context instead of bare PIDs with `/`
 - **Mobile page controls** — make `PgUp` and `PgDn` scroll the mobile pane itself, since the mobile shell renders a snapshot instead of a live tmux viewport
 - **Mobile page end jump** — add a `PgEnd` control beside `Enter` so long threads can jump straight to the bottom

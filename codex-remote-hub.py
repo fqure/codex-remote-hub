@@ -17,11 +17,14 @@ import socket
 import glob as _glob
 import platform as _platform
 import re
+import mimetypes
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import unquote, parse_qs, urlparse
 from urllib.request import urlopen
 from datetime import datetime
+from email.parser import BytesParser
+from email.policy import default as EMAIL_POLICY
 
 VERSION = "1.0.0"
 
@@ -76,6 +79,8 @@ IGNORED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".tox",
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _template_cache: dict[str, str] = {}
 TTYD_PATCH_MARKER = "codex-remote-hub-mobile-v1"
+HUB_AGENTS_START = "<!-- codex-remote-hub:start -->"
+HUB_AGENTS_END = "<!-- codex-remote-hub:end -->"
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -86,6 +91,481 @@ def _ssl_cert_paths() -> tuple[str, str]:
         os.path.join(INSTALL_DIR, "hub.crt"),
         os.path.join(INSTALL_DIR, "hub.key"),
     )
+
+
+def _codex_remote_shot_command() -> str:
+    """Return the screenshot helper command sessions should use."""
+    return f"bash {os.path.join(INSTALL_DIR, 'codex-remote-shot')}"
+
+
+def _safe_path_segment(value: str) -> str:
+    """Sanitize a user/session supplied path segment for local storage."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", value.strip())
+    return cleaned or "default"
+
+
+def _assets_root_dir() -> str:
+    """Return the on-disk root for uploaded/generated session assets."""
+    explicit = os.environ.get("CODEX_REMOTE_HUB_ASSETS_DIR", "").strip()
+    if explicit:
+        return os.path.realpath(os.path.expanduser(explicit))
+    return os.path.realpath(os.path.expanduser("~/Pictures/Screenshots"))
+
+
+def _session_asset_dir(name: str, ensure: bool = False) -> str:
+    """Return the per-session asset directory path."""
+    asset_dir = os.path.join(_assets_root_dir(), _safe_path_segment(name))
+    if ensure:
+        os.makedirs(asset_dir, exist_ok=True)
+    return asset_dir
+
+
+def _is_image_filename(filename: str) -> bool:
+    """Return True if a filename looks like a supported browser-displayable image."""
+    mime_type, _ = mimetypes.guess_type(filename)
+    return bool(mime_type and mime_type.startswith("image/"))
+
+
+def _sanitize_upload_name(filename: str, content_type: str) -> str:
+    """Normalize an uploaded filename and preserve/derive an image extension."""
+    base = os.path.basename(filename or "").strip()
+    stem, ext = os.path.splitext(base)
+    safe_stem = _safe_path_segment(stem or "image")
+    if not ext:
+        guessed_ext = mimetypes.guess_extension(content_type or "") or ".png"
+        ext = guessed_ext
+    safe_ext = re.sub(r"[^A-Za-z0-9.]", "", ext.lower()) or ".png"
+    return safe_stem + safe_ext
+
+
+def _list_session_assets(name: str) -> list[dict]:
+    """Return image assets for a session, newest first."""
+    asset_dir = _session_asset_dir(name)
+    if not os.path.isdir(asset_dir):
+        return []
+
+    assets: list[dict] = []
+    try:
+        for entry in os.scandir(asset_dir):
+            if not entry.is_file():
+                continue
+            if not _is_image_filename(entry.name):
+                continue
+            stat = entry.stat()
+            assets.append({
+                "name": entry.name,
+                "path": os.path.realpath(entry.path),
+                "url": f"/assets/{_safe_path_segment(name)}/{entry.name}",
+                "updated": int(stat.st_mtime * 1000),
+                "size": stat.st_size,
+            })
+    except OSError:
+        return []
+
+    assets.sort(key=lambda item: item["updated"], reverse=True)
+    return assets
+
+
+def _parse_uploaded_images(content_type: str, body: bytes) -> list[dict]:
+    """Parse multipart image uploads using only the stdlib email parser."""
+    if "multipart/form-data" not in (content_type or "").lower():
+        return []
+
+    raw = (
+        f"Content-Type: {content_type}\r\n"
+        f"MIME-Version: 1.0\r\n\r\n"
+    ).encode() + body
+    message = BytesParser(policy=EMAIL_POLICY).parsebytes(raw)
+    if not message.is_multipart():
+        return []
+
+    uploads: list[dict] = []
+    for part in message.iter_parts():
+        if part.get_content_disposition() != "form-data":
+            continue
+        filename = part.get_filename()
+        if not filename:
+            continue
+        payload = part.get_payload(decode=True) or b""
+        uploads.append({
+            "filename": filename,
+            "content_type": part.get_content_type(),
+            "data": payload,
+        })
+    return uploads
+
+
+def _store_uploaded_images(name: str, uploads: list[dict]) -> list[dict]:
+    """Persist uploaded images for a session and return their metadata."""
+    asset_dir = _session_asset_dir(name, ensure=True)
+    saved: list[dict] = []
+    for upload in uploads:
+        content_type = upload.get("content_type", "")
+        filename = _sanitize_upload_name(upload.get("filename", ""), content_type)
+        if not _is_image_filename(filename):
+            continue
+        data = upload.get("data", b"")
+        if not data or len(data) > 15 * 1024 * 1024:
+            continue
+
+        target = os.path.join(asset_dir, filename)
+        if os.path.exists(target):
+            stem, ext = os.path.splitext(filename)
+            target = os.path.join(asset_dir, f"{stem}-{int(time.time() * 1000)}{ext}")
+
+        with open(target, "wb") as f:
+            f.write(data)
+
+        stat = os.stat(target)
+        saved.append({
+            "name": os.path.basename(target),
+            "path": os.path.realpath(target),
+            "url": f"/assets/{_safe_path_segment(name)}/{os.path.basename(target)}",
+            "updated": int(stat.st_mtime * 1000),
+            "size": stat.st_size,
+        })
+    return saved
+
+
+def _tailscale_dns_name() -> Optional[str]:
+    """Return the current machine MagicDNS hostname when Tailscale is available."""
+    tailscale = shutil.which("tailscale")
+    if not tailscale:
+        return None
+    try:
+        out = subprocess.check_output(
+            [tailscale, "status", "--json"],
+            text=True, stderr=subprocess.DEVNULL
+        )
+        dns_name = json.loads(out).get("Self", {}).get("DNSName", "").rstrip(".")
+        return dns_name or None
+    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _public_base_url() -> str:
+    """Return the best externally reachable base URL for session helpers."""
+    explicit = os.environ.get("CODEX_REMOTE_HUB_BASE_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit
+
+    scheme = "https" if _has_ssl_certs() else "http"
+    host = _tailscale_dns_name() or f"localhost:{HUB_PORT}"
+    if ":" not in host:
+        host = f"{host}:{HUB_PORT}"
+    return f"{scheme}://{host}"
+
+
+def _hub_agents_block() -> str:
+    """Return the managed AGENTS.md block for hub-launched sessions."""
+    shot_cmd = _codex_remote_shot_command()
+    return (
+        f"{HUB_AGENTS_START}\n"
+        "## Codex Remote Hub\n"
+        f"- When the user asks for a screenshot of this Mac, run `{shot_cmd}` and reply with the returned URL.\n"
+        f"- Do not use raw `screencapture` or ad-hoc tmux commands for screenshots when `{shot_cmd}` is available.\n"
+        f"- Use `{shot_cmd} window` for the active window and `{shot_cmd} area` for an interactive region when requested.\n"
+        "- Return the served URL, not only a local filesystem path.\n"
+        f"{HUB_AGENTS_END}\n"
+    )
+
+
+def _dev_root_agents_path(directory: Optional[str]) -> Optional[str]:
+    """Return the shared AGENTS.md path when a session lives under DEV_ROOT."""
+    try:
+        root = os.path.realpath(DEV_ROOT)
+        target = os.path.realpath(directory or root)
+        if os.path.commonpath([root, target]) != root:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return os.path.join(root, "AGENTS.md")
+
+
+def _ensure_dev_root_agents(directory: Optional[str]) -> None:
+    """Upsert the hub-managed screenshot instructions into DEV_ROOT/AGENTS.md."""
+    agents_path = _dev_root_agents_path(directory)
+    if not agents_path:
+        return
+
+    block = _hub_agents_block().rstrip() + "\n"
+    existing = ""
+    try:
+        with open(agents_path, "r", encoding="utf-8") as f:
+            existing = f.read()
+    except FileNotFoundError:
+        existing = ""
+    except OSError:
+        return
+
+    pattern = re.compile(
+        rf"{re.escape(HUB_AGENTS_START)}.*?{re.escape(HUB_AGENTS_END)}\n?",
+        re.DOTALL,
+    )
+    if pattern.search(existing):
+        updated = pattern.sub(block, existing, count=1)
+    elif existing.strip():
+        updated = existing.rstrip() + "\n\n" + block
+    else:
+        updated = block
+
+    if updated == existing:
+        return
+
+    try:
+        os.makedirs(os.path.dirname(agents_path), exist_ok=True)
+        with open(agents_path, "w", encoding="utf-8") as f:
+            f.write(updated)
+    except OSError:
+        return
+
+
+def _session_env(name: str) -> dict[str, str]:
+    """Build a child environment for Codex sessions."""
+    clean_env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+    clean_env["PATH"] = INSTALL_DIR + os.pathsep + clean_env.get("PATH", "")
+    clean_env["CODEX_REMOTE_HUB_ASSETS_DIR"] = _assets_root_dir()
+    clean_env["CODEX_REMOTE_HUB_ASSET_DIR"] = _session_asset_dir(name, ensure=True)
+    clean_env["CODEX_REMOTE_HUB_SESSION"] = _safe_path_segment(name)
+    clean_env["CODEX_REMOTE_HUB_BASE_URL"] = _public_base_url()
+    clean_env["CODEX_REMOTE_HUB_SCREENSHOT_CMD"] = _codex_remote_shot_command()
+    return clean_env
+
+
+def _take_session_screenshot(name: str, mode: str = "screen") -> dict:
+    """Capture a screenshot for a session and return saved asset metadata."""
+    helper_path = os.path.join(INSTALL_DIR, "codex-remote-shot")
+    if not os.path.exists(helper_path):
+        raise RuntimeError("Screenshot helper not installed")
+
+    normalized_mode = (mode or "screen").strip().lower()
+    mode_aliases = {
+        "screen": "screen",
+        "full": "screen",
+        "desktop": "screen",
+        "window": "window",
+        "area": "area",
+        "selection": "area",
+    }
+    helper_mode = mode_aliases.get(normalized_mode)
+    if not helper_mode:
+        raise ValueError("invalid screenshot mode")
+
+    proc = subprocess.run(
+        ["bash", helper_path, helper_mode],
+        capture_output=True,
+        text=True,
+        env=_session_env(name),
+        timeout=180,
+    )
+    if proc.returncode != 0:
+        message = (proc.stderr or proc.stdout or "Screenshot capture failed").strip()
+        raise RuntimeError(message or "Screenshot capture failed")
+
+    output_lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    public_url = ""
+    for line in reversed(output_lines):
+        if line.startswith("http://") or line.startswith("https://"):
+            public_url = line
+            break
+    if not public_url:
+        raise RuntimeError("Screenshot helper did not return a public URL")
+
+    parsed = urlparse(public_url)
+    filename = os.path.basename(parsed.path)
+    asset_path, _mime_type = _resolve_session_asset_file(name, filename)
+    if not asset_path:
+        raise RuntimeError("Screenshot file was not saved in the session asset directory")
+
+    stat = os.stat(asset_path)
+    return {
+        "name": filename,
+        "path": asset_path,
+        "url": f"/assets/{_safe_path_segment(name)}/{filename}",
+        "public_url": public_url,
+        "updated": int(stat.st_mtime * 1000),
+        "size": stat.st_size,
+        "mode": helper_mode,
+    }
+
+
+def _list_macos_windows() -> list[dict]:
+    """Return selectable on-screen macOS windows with stable window IDs."""
+    if PLATFORM != "darwin":
+        return []
+
+    script = (
+        'ObjC.import("CoreGraphics"); '
+        'ObjC.import("Foundation"); '
+        'const opts = $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements; '
+        'const info = $.CGWindowListCopyWindowInfo(opts, $.kCGNullWindowID); '
+        'const rows = ObjC.deepUnwrap(ObjC.castRefToObject(info)); '
+        'const filtered = rows.map(function(w) { '
+        '  const owner = String(w.kCGWindowOwnerName || "").trim(); '
+        '  const title = String(w.kCGWindowName || "").trim(); '
+        '  return {'
+        '    id: Number(w.kCGWindowNumber || 0),'
+        '    owner: owner,'
+        '    title: title,'
+        '    pid: Number(w.kCGWindowOwnerPID || 0),'
+        '    layer: Number(w.kCGWindowLayer || 0),'
+        '    alpha: Number(w.kCGWindowAlpha || 0),'
+        '    onscreen: Boolean(w.kCGWindowIsOnscreen),'
+        '    bounds: w.kCGWindowBounds || {}'
+        '  };'
+        '}).filter(function(w) { '
+        '  return w.id > 0 && '
+        '    w.layer === 0 && '
+        '    w.onscreen && '
+        '    w.alpha > 0 && '
+        '    w.owner && '
+        '    w.owner !== "Window Server" && '
+        '    w.owner !== "Control Center"; '
+        '}).map(function(w) { '
+        '  return {'
+        '    id: w.id,'
+        '    owner: w.owner,'
+        '    title: w.title,'
+        '    pid: w.pid,'
+        '    bounds: w.bounds'
+        '  };'
+        '}); '
+        'console.log(JSON.stringify(filtered));'
+    )
+    try:
+        proc = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", script],
+            text=True,
+            capture_output=True,
+        )
+        raw = (proc.stdout or proc.stderr or "").strip()
+        if proc.returncode != 0 or not raw:
+            return []
+        windows = json.loads(raw)
+    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError):
+        return []
+
+    deduped: list[dict] = []
+    seen: set[tuple[int, str, str]] = set()
+    for item in windows:
+        try:
+            window_id = int(item.get("id", 0))
+        except (TypeError, ValueError):
+            continue
+        owner = str(item.get("owner", "")).strip()
+        title = str(item.get("title", "")).strip()
+        if not window_id or not owner or not title:
+            title = ""
+        bounds = item.get("bounds") or {}
+        try:
+            width = int(bounds.get("Width", 0) or 0)
+            height = int(bounds.get("Height", 0) or 0)
+        except (TypeError, ValueError):
+            width = 0
+            height = 0
+        if not window_id or not owner:
+            continue
+        key = (window_id, owner, title)
+        if key in seen:
+            continue
+        seen.add(key)
+        if title and title.lower() != owner.lower():
+            display_title = title
+        elif width > 0 and height > 0:
+            display_title = f"Window {window_id} ({width}×{height})"
+        else:
+            display_title = f"Window {window_id}"
+        deduped.append({
+            "id": window_id,
+            "owner": owner,
+            "title": display_title,
+            "label": f"{owner} - {display_title}",
+        })
+    return deduped
+
+
+def _take_session_window_screenshot(name: str, window_id: int) -> dict:
+    """Capture a screenshot for a specific macOS window ID."""
+    helper_path = os.path.join(INSTALL_DIR, "codex-remote-shot")
+    if not os.path.exists(helper_path):
+        raise RuntimeError("Screenshot helper not installed")
+    if PLATFORM != "darwin":
+        raise RuntimeError("Window screenshots are only supported on macOS")
+    if window_id <= 0:
+        raise ValueError("invalid window id")
+
+    proc = subprocess.run(
+        ["bash", helper_path, "window-id", str(window_id)],
+        capture_output=True,
+        text=True,
+        env=_session_env(name),
+        timeout=180,
+    )
+    if proc.returncode != 0:
+        message = (proc.stderr or proc.stdout or "Window screenshot failed").strip()
+        raise RuntimeError(message or "Window screenshot failed")
+
+    output_lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    public_url = ""
+    for line in reversed(output_lines):
+        if line.startswith("http://") or line.startswith("https://"):
+            public_url = line
+            break
+    if not public_url:
+        raise RuntimeError("Screenshot helper did not return a public URL")
+
+    parsed = urlparse(public_url)
+    filename = os.path.basename(parsed.path)
+    asset_path, _mime_type = _resolve_session_asset_file(name, filename)
+    if not asset_path:
+        raise RuntimeError("Screenshot file was not saved in the session asset directory")
+
+    stat = os.stat(asset_path)
+    return {
+        "name": filename,
+        "path": asset_path,
+        "url": f"/assets/{_safe_path_segment(name)}/{filename}",
+        "public_url": public_url,
+        "updated": int(stat.st_mtime * 1000),
+        "size": stat.st_size,
+        "mode": "window",
+        "window_id": window_id,
+    }
+
+
+def _resolve_session_asset_file(name: str, filename: str) -> tuple[Optional[str], Optional[str]]:
+    """Resolve and validate a session asset path.
+
+    Returns:
+        (full_path, content_type)
+    """
+    safe_name = _safe_path_segment(name)
+    requested_name = (filename or "").strip()
+    if not requested_name or requested_name != os.path.basename(requested_name):
+        return None, None
+    if "/" in requested_name or "\\" in requested_name:
+        return None, None
+
+    safe_filename = requested_name
+    if safe_filename in {"", ".", ".."}:
+        return None, None
+
+    if not _is_image_filename(safe_filename):
+        return None, None
+
+    asset_dir = _session_asset_dir(safe_name)
+    candidate = os.path.realpath(os.path.join(asset_dir, safe_filename))
+    asset_root = os.path.realpath(asset_dir)
+
+    if not candidate.startswith(asset_root.rstrip(os.sep) + os.sep):
+        if candidate != asset_root:
+            return None, None
+
+    if not os.path.isfile(candidate):
+        return None, None
+
+    mime_type, _ = mimetypes.guess_type(candidate)
+    return candidate, mime_type or "image/png"
 
 
 def _has_ssl_certs() -> bool:
@@ -732,6 +1212,7 @@ def start_session(name: str, directory: Optional[str] = None, skip_permissions: 
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
     if r.returncode != 0:
+        _ensure_dev_root_agents(directory)
         cmd = [TMUX_BIN, "new-session", "-d", "-s", session]
         if directory and os.path.isdir(directory):
             cmd += ["-c", directory]
@@ -739,7 +1220,7 @@ def start_session(name: str, directory: Optional[str] = None, skip_permissions: 
         if skip_permissions:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
         # Strip CODEX_HOME to prevent "cannot launch inside another session" error
-        clean_env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+        clean_env = _session_env(name)
         subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -774,6 +1255,7 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
 
     session = _session_name(name)
     port = port_for_name(name)
+    _ensure_dev_root_agents(cwd)
 
     # Build the codex command with fork or resume --last
     cmd = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
@@ -788,7 +1270,7 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
         cmd.append("--dangerously-bypass-approvals-and-sandbox")
 
     # Strip CODEX_HOME to prevent "cannot launch inside another session" error
-    clean_env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+    clean_env = _session_env(name)
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      env=clean_env)
     time.sleep(1.0)
@@ -1101,6 +1583,16 @@ class HubHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(sessions).encode())
             return
 
+        # API: list selectable macOS windows for screenshot capture
+        if path == "/api/windows":
+            windows = _list_macos_windows()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "windows": windows}).encode())
+            return
+
         # Capture a running Codex CLI session
         if path == "/capture":
             try:
@@ -1159,6 +1651,56 @@ class HubHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data).encode())
             return
 
+        # API: list image assets for session
+        if path.startswith("/api/assets/"):
+            name = path.split("/api/assets/")[1].strip("/")
+            if not name:
+                self.send_response(400)
+                self.end_headers()
+                return
+            assets = _list_session_assets(name)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.end_headers()
+            self.wfile.write(json.dumps({"assets": assets}).encode())
+            return
+
+        # Asset download (and browser preview)
+        if path.startswith("/assets/"):
+            raw = path[len("/assets/"):]
+            if "/" not in raw:
+                self.send_response(404)
+                self.end_headers()
+                return
+            name, filename = raw.split("/", 1)
+            asset_path, mime_type = _resolve_session_asset_file(name, filename)
+            if not asset_path:
+                self.send_response(404)
+                self.end_headers()
+                return
+            try:
+                with open(asset_path, "rb") as f:
+                    data = f.read()
+            except OSError:
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Content-Length", str(len(data)))
+            if qs.get("download", ["0"])[0] == "1":
+                filename = os.path.basename(asset_path)
+                safe_name = filename.replace('"', "")
+                self.send_header(
+                    "Content-Disposition", f'attachment; filename=\"{safe_name}\"'
+                )
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
         # Icon
         if path == "/icon.png":
             icon_path = os.path.join(INSTALL_DIR, "icon_cxhub.png")
@@ -1196,6 +1738,66 @@ class HubHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+
+        # API: take a native screenshot for a session
+        if path.startswith("/api/screenshot/"):
+            name = path.split("/api/screenshot/")[1].strip("/")
+            if not name:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+
+            content_length = int(self.headers.get("Content-Length", 0))
+            payload = {}
+            if content_length:
+                try:
+                    payload = json.loads(self.rfile.read(content_length))
+                except json.JSONDecodeError:
+                    self._send_json({"error": "invalid json"}, 400)
+                    return
+
+            try:
+                requested_mode = payload.get("mode", "screen")
+                if requested_mode == "window":
+                    screenshot = _take_session_window_screenshot(
+                        name,
+                        int(payload.get("window_id", 0)),
+                    )
+                else:
+                    screenshot = _take_session_screenshot(name, requested_mode)
+            except ValueError:
+                self._send_json({"error": "invalid screenshot request"}, 400)
+                return
+            except subprocess.TimeoutExpired:
+                self._send_json({"error": "Screenshot capture timed out"}, 504)
+                return
+            except RuntimeError as err:
+                self._send_json({"error": str(err)}, 500)
+                return
+
+            self._send_json({"ok": True, "screenshot": screenshot})
+            return
+
+        # API: upload image attachments for a session
+        if path.startswith("/api/upload-image/"):
+            name = path.split("/api/upload-image/")[1].strip("/")
+            if not name:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+
+            content_type = self.headers.get("Content-Type", "")
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            uploads = _parse_uploaded_images(content_type, body)
+            if not uploads:
+                self._send_json({"error": "no images uploaded"}, 400)
+                return
+            saved = _store_uploaded_images(name, uploads)
+            self._send_json({
+                "ok": True,
+                "saved": saved,
+                "count": len(saved),
+            })
+            return
 
         # API: send special key via tmux
         if path.startswith("/api/send-keys/"):

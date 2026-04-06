@@ -1,0 +1,160 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALL_DIR="${CODEX_REMOTE_HUB_DIR:-$SCRIPT_DIR}"
+
+session_name="${CODEX_REMOTE_HUB_SESSION:-}"
+if [ -z "$session_name" ] && [ -n "${TMUX:-}" ]; then
+  raw_session="$(tmux display-message -p '#{session_name}' 2>/dev/null || true)"
+  raw_session="${raw_session#codex-}"
+  session_name="$(printf '%s' "$raw_session" | tr -c 'A-Za-z0-9._-' '_')"
+fi
+
+if [ -z "$session_name" ]; then
+  echo "codex-remote-shot could not determine the hub session name" >&2
+  exit 1
+fi
+
+assets_root="${CODEX_REMOTE_HUB_ASSETS_DIR:-$HOME/Pictures/Screenshots}"
+asset_dir="${CODEX_REMOTE_HUB_ASSET_DIR:-$assets_root/$session_name}"
+mkdir -p "$asset_dir"
+
+scheme="http"
+if [ -f "$INSTALL_DIR/hub.crt" ] && [ -f "$INSTALL_DIR/hub.key" ]; then
+  scheme="https"
+fi
+
+tailscale_host="$(
+  tailscale status --json 2>/dev/null \
+    | python3 -c 'import sys, json; print(json.load(sys.stdin).get("Self", {}).get("DNSName", "").rstrip("."))' 2>/dev/null \
+    || true
+)"
+
+base_url="${CODEX_REMOTE_HUB_BASE_URL:-}"
+if [ -n "$tailscale_host" ]; then
+  tailscale_url="${scheme}://${tailscale_host}:7690"
+  case "$base_url" in
+    ""|http://localhost:*|https://localhost:*|http://127.0.0.1:*|https://127.0.0.1:*)
+      base_url="$tailscale_url"
+      ;;
+  esac
+fi
+if [ -z "$base_url" ]; then
+  if [ -n "$tailscale_host" ]; then
+    base_url="${scheme}://${tailscale_host}:7690"
+  else
+    base_url="${scheme}://localhost:7690"
+  fi
+fi
+
+mode="${1:-screen}"
+window_id="${2:-}"
+timestamp="$(date +%Y%m%d-%H%M%S)"
+filename="shot-${timestamp}.png"
+target="$asset_dir/$filename"
+
+run_native_capture() {
+  case "$mode" in
+    screen|full)
+      /usr/sbin/screencapture -x "$target"
+      ;;
+    window)
+      /usr/sbin/screencapture -x -w "$target"
+      ;;
+    window-id)
+      if [ -z "$window_id" ]; then
+        echo "Usage: codex-remote-shot [screen|window|area|window-id <id>]" >&2
+        exit 1
+      fi
+      /usr/sbin/screencapture -x -l "$window_id" "$target"
+      ;;
+    area|selection)
+      /usr/sbin/screencapture -x -i "$target"
+      ;;
+    *)
+      echo "Usage: codex-remote-shot [screen|window|area|window-id <id>]" >&2
+      exit 1
+      ;;
+  esac
+}
+
+run_macos_terminal_capture() {
+  local status_file stderr_file launcher launcher_base status_code capture_cmd target_q status_q stderr_q
+  status_file="$(mktemp /tmp/codex-remote-shot-status.XXXXXX)"
+  stderr_file="$(mktemp /tmp/codex-remote-shot-stderr.XXXXXX)"
+  rm -f "$status_file" "$stderr_file"
+  launcher_base="$(mktemp /tmp/codex-remote-shot-run.XXXXXX)"
+  launcher="${launcher_base}.command"
+  mv "$launcher_base" "$launcher"
+  target_q="$(printf '%q' "$target")"
+  status_q="$(printf '%q' "$status_file")"
+  stderr_q="$(printf '%q' "$stderr_file")"
+
+  case "$mode" in
+    screen|full)
+      capture_cmd="/usr/sbin/screencapture -x $target_q"
+      ;;
+    window)
+      capture_cmd="/usr/sbin/screencapture -x -w $target_q"
+      ;;
+    window-id)
+      if [ -z "$window_id" ]; then
+        rm -f "$status_file" "$stderr_file" "$launcher"
+        echo "Usage: codex-remote-shot [screen|window|area|window-id <id>]" >&2
+        exit 1
+      fi
+      capture_cmd="/usr/sbin/screencapture -x -l $(printf '%q' "$window_id") $target_q"
+      ;;
+    area|selection)
+      capture_cmd="/usr/sbin/screencapture -x -i $target_q"
+      ;;
+    *)
+      rm -f "$status_file" "$stderr_file" "$launcher"
+      echo "Usage: codex-remote-shot [screen|window|area|window-id <id>]" >&2
+      exit 1
+      ;;
+  esac
+
+  cat >"$launcher" <<EOF
+#!/bin/bash
+($capture_cmd) 2>$stderr_q
+printf '%s' "\$?" > $status_q
+exit
+EOF
+  chmod +x "$launcher"
+  open -g -a Terminal "$launcher" >/dev/null
+
+  local tries=0
+  while [ ! -f "$status_file" ] && [ "$tries" -lt 300 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+
+  if [ ! -f "$status_file" ]; then
+    rm -f "$status_file" "$stderr_file" "$launcher"
+    echo "Timed out waiting for Terminal screenshot capture to finish" >&2
+    exit 1
+  fi
+
+  status_code="$(cat "$status_file" 2>/dev/null || printf '1')"
+  if [ "$status_code" != "0" ] || [ ! -f "$target" ]; then
+    if [ -s "$stderr_file" ]; then
+      cat "$stderr_file" >&2
+    else
+      echo "macOS Terminal screenshot capture failed" >&2
+    fi
+    rm -f "$status_file" "$stderr_file" "$launcher"
+    exit 1
+  fi
+
+  rm -f "$status_file" "$stderr_file" "$launcher"
+}
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  run_macos_terminal_capture
+else
+  run_native_capture
+fi
+
+echo "${base_url}/assets/${session_name}/${filename}"

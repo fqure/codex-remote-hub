@@ -263,6 +263,62 @@
     max-width: 100%;
   }
 
+  .input-stack {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .image-preview-strip {
+    display: none;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+  }
+
+  .image-preview-strip.has-items {
+    display: flex;
+  }
+
+  .image-preview-card {
+    position: relative;
+    width: 76px;
+    height: 76px;
+    flex: 0 0 auto;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #0e1017;
+  }
+
+  .image-preview-thumb {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #0e1017;
+  }
+
+  .image-preview-remove {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(10, 10, 15, 0.8);
+    color: #fff;
+    font: 700 12px/1 var(--sans);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .controls-shell {
     display: grid;
     gap: 4px;
@@ -273,7 +329,15 @@
   .controls-toggle-row {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .controls-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
   .controls-toggle {
@@ -292,6 +356,13 @@
     margin-top: 5px;
     margin-bottom: 5px;
     margin-left: 5px;
+  }
+
+  .controls-upload-btn {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    color: var(--text-dim);
   }
 
   .controls-toggle .chevron {
@@ -356,6 +427,108 @@
     border-color: rgba(16, 163, 127, 0.45);
     background: rgba(16, 163, 127, 0.18);
     color: #dffff5;
+  }
+
+  .window-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 16px 12px calc(env(safe-area-inset-bottom) + 12px);
+    background: rgba(5, 6, 10, 0.72);
+    backdrop-filter: blur(8px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+  }
+
+  .window-sheet.hidden {
+    display: none;
+  }
+
+  .window-sheet-card {
+    width: 100%;
+    max-width: 680px;
+    height: min(72vh, 640px);
+    max-height: min(72vh, 640px);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 22px;
+    background: rgba(18, 19, 26, 0.98);
+    box-shadow: var(--shadow);
+    padding: 14px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .window-sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .window-sheet-title {
+    font: 700 14px/1 var(--mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .window-sheet-close {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+  }
+
+  .window-list {
+    display: grid;
+    gap: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+    flex: 1 1 auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .window-list-empty {
+    padding: 18px 10px;
+    color: var(--text-dim);
+    font: 500 13px/1.4 var(--sans);
+    text-align: center;
+  }
+
+  .window-item {
+    width: 100%;
+    text-align: left;
+    display: grid;
+    gap: 4px;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .window-item-owner {
+    font: 700 13px/1.2 var(--sans);
+  }
+
+  .window-item-title {
+    font: 500 12px/1.35 var(--sans);
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .mic-btn.listening {
@@ -452,6 +625,56 @@
     .input-row {
       grid-template-columns: minmax(0, 1fr) 45px 45px;
       gap: 2px;
+    }
+
+    body.input-focus .header,
+    body.input-focus .main {
+      display: none;
+    }
+
+    body.input-focus .composer-shell {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      padding: calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px);
+      background:
+        linear-gradient(180deg, rgba(10, 10, 15, 0.98), rgba(10, 10, 15, 0.98)),
+        var(--bg);
+    }
+
+    body.input-focus .composer {
+      margin: 0;
+      height: 100%;
+      max-height: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 8px;
+    }
+
+    body.input-focus .controls-shell {
+      display: none;
+    }
+
+    body.input-focus .input-row {
+      flex: 1;
+      min-height: 0;
+      align-items: stretch;
+    }
+
+    body.input-focus .input-stack {
+      flex: 1;
+      min-height: 0;
+    }
+
+    body.input-focus .composer-input {
+      flex: 1;
+      min-height: 0;
+      height: 100% !important;
+      max-height: none;
+      font-size: 16px;
+      line-height: 1.45;
+      padding: 14px 13px;
     }
 
   }
@@ -587,6 +810,13 @@
               <span>Controls</span>
               <span class="chevron">⌃</span>
             </button>
+            <div class="controls-header-actions">
+              <button id="image-btn" class="ghost-btn icon-action-btn controls-upload-btn" type="button" aria-label="Upload image">
+                <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3l1.4-1.5A2 2 0 0 1 9.86 3h4.28a2 2 0 0 1 1.46.5L17 5h3Zm-8 3.25A4.75 4.75 0 1 0 16.75 13 4.76 4.76 0 0 0 12 8.25Zm0 1.5A3.25 3.25 0 1 1 8.75 13 3.25 3.25 0 0 1 12 9.75Z"/>
+                </svg>
+              </button>
+            </div>
           </div>
           <div class="controls-body">
         <div class="tool-row">
@@ -599,10 +829,8 @@
             </div>
 
             <div class="nav-row">
-              <button class="chip-btn" data-key="Left">Left</button>
-              <button class="chip-btn" data-key="Up">Up</button>
-              <button class="chip-btn" data-key="Down">Down</button>
-              <button class="chip-btn" data-key="Right">Right</button>
+              <button class="chip-btn" data-shot="screen">Desk</button>
+              <button class="chip-btn" data-shot="window">Window</button>
               <button class="chip-btn" data-scroll="up">PgUp</button>
               <button class="chip-btn" data-scroll="down">PgDn</button>
             </div>
@@ -610,7 +838,10 @@
         </div>
 
         <div class="input-row">
-          <textarea id="composer-input" class="composer-input" rows="1" aria-label="Send text to Codex"></textarea>
+          <div class="input-stack">
+            <div id="image-preview-strip" class="image-preview-strip" aria-live="polite"></div>
+            <textarea id="composer-input" class="composer-input" rows="1" aria-label="Send text to Codex"></textarea>
+          </div>
           <button id="mic-btn" class="ghost-btn mic-btn icon-action-btn" type="button" aria-label="Microphone">
             <svg class="btn-icon" viewBox="0 0 2.271 2.271" aria-hidden="true">
               <path d="M2.271,1.135c0,0.626 -0.509,1.135 -1.136,1.135c-0.626,-0 -1.135,-0.509 -1.135,-1.135c0,-0.626 0.509,-1.135 1.135,-1.135c0.627,0 1.136,0.509 1.136,1.135Zm-0.821,-0.142l-0,0.153c-0,0.184 -0.132,0.317 -0.315,0.317c-0.182,-0 -0.314,-0.133 -0.314,-0.317l0,-0.153c0,-0.035 -0.029,-0.068 -0.066,-0.068c-0.035,0 -0.067,0.033 -0.067,0.068l-0,0.153c-0,0.236 0.152,0.411 0.379,0.44l0,0.094l-0.226,0c-0.037,0 -0.07,0.033 -0.07,0.069c-0,0.038 0.033,0.068 0.07,0.068l0.591,-0c0.035,-0 0.067,-0.031 0.067,-0.068c0,-0.036 -0.031,-0.069 -0.067,-0.069l-0.227,0l0,-0.094c0.227,-0.031 0.377,-0.204 0.377,-0.44l0,-0.153c0,-0.035 -0.031,-0.068 -0.066,-0.068c-0.037,0 -0.066,0.033 -0.066,0.068Zm-0.504,-0.326l0,0.486c0,0.115 0.078,0.203 0.189,0.203c0.111,-0 0.19,-0.088 0.19,-0.203l-0,-0.486c-0,-0.116 -0.079,-0.2 -0.19,-0.2c-0.111,-0 -0.189,0.084 -0.189,0.2Z"/>
@@ -622,7 +853,20 @@
             </svg>
           </button>
         </div>
+        <input id="image-input" type="file" accept="image/*" multiple hidden>
       </section>
+    </div>
+  </div>
+
+  <div class="window-sheet hidden" id="window-sheet" aria-hidden="true">
+    <div class="window-sheet-card">
+      <div class="window-sheet-head">
+        <div class="window-sheet-title">Select Window</div>
+        <button id="window-sheet-close" class="ghost-btn window-sheet-close" type="button" aria-label="Close window picker">✕</button>
+      </div>
+      <div class="window-list" id="window-list">
+        <div class="window-list-empty">Loading windows…</div>
+      </div>
     </div>
   </div>
 
@@ -632,18 +876,25 @@
   var pane = document.getElementById('pane');
   var cwdLabel = document.getElementById('cwd-label');
   var input = document.getElementById('composer-input');
+  var imageBtn = document.getElementById('image-btn');
+  var imageInput = document.getElementById('image-input');
   var micBtn = document.getElementById('mic-btn');
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
   var composerShell = document.querySelector('.composer-shell');
   var controlsShell = document.getElementById('controls-shell');
   var controlsToggle = document.getElementById('controls-toggle');
+  var imagePreviewStrip = document.getElementById('image-preview-strip');
+  var windowSheet = document.getElementById('window-sheet');
+  var windowList = document.getElementById('window-list');
+  var windowSheetClose = document.getElementById('window-sheet-close');
   var lastText = "";
   var lastCursorY = null;
   var pollTimer = null;
   var hasLoadedOnce = false;
   var pendingSubmittedText = '';
   var pendingInputSnapshot = '';
+  var cachedWindows = [];
   var SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   var recognition = null;
   var recognitionBaseText = '';
@@ -667,6 +918,11 @@
   }
 
   function autoResize() {
+    if (document.body.classList.contains('input-focus') && window.innerWidth < 700) {
+      input.style.height = '100%';
+      syncViewportHeight();
+      return;
+    }
     var minHeight = parseFloat(getComputedStyle(input).minHeight) || 0;
     input.style.height = '0px';
     var targetHeight = !input.value.trim()
@@ -714,6 +970,35 @@
     return parts.length > 2 ? '…/' + tail : tail;
   }
 
+  function linkifyText(text) {
+    var fragment = document.createDocumentFragment();
+    var pattern = /(https?:\/\/[^\s<>"']+)/g;
+    var lastIndex = 0;
+    var match;
+
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      }
+      var href = match[1];
+      var link = document.createElement('a');
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = href;
+      link.style.color = 'inherit';
+      link.style.textDecoration = 'underline';
+      fragment.appendChild(link);
+      lastIndex = match.index + href.length;
+    }
+
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+
+    return fragment;
+  }
+
   function renderPaneText(text) {
     pane.innerHTML = '';
 
@@ -732,7 +1017,7 @@
       if (block.trim().startsWith('›')) {
         el.classList.add('user');
       }
-      el.textContent = block;
+      el.appendChild(linkifyText(block));
       pane.appendChild(el);
     });
   }
@@ -741,6 +1026,209 @@
     return (text || '')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  function insertAssetUrls(assets) {
+    if (!assets || !assets.length) return;
+    var refs = assets
+      .map(function(asset) { return window.location.origin + asset.url; })
+      .join('\n');
+    input.value = input.value.trim()
+      ? input.value.replace(/\s+$/, '') + '\n' + refs
+      : refs;
+    renderImagePreviews();
+    autoResize();
+    input.focus();
+  }
+
+  function insertComposerText(text) {
+    if (!text) return;
+    input.value = input.value.trim()
+      ? input.value.replace(/\s+$/, '') + '\n' + text
+      : text;
+    renderImagePreviews();
+    autoResize();
+    input.focus();
+  }
+
+  function extractImageUrls(text) {
+    var matches = (text || '').match(/https?:\/\/[^\s<>"']+\.(?:png|jpe?g|gif|webp|bmp)(?:\?[^\s<>"']*)?/gi) || [];
+    var seen = Object.create(null);
+    return matches.filter(function(url) {
+      if (seen[url]) return false;
+      seen[url] = true;
+      return true;
+    });
+  }
+
+  function removeImageUrl(url) {
+    if (!url) return;
+    var escaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var linePattern = new RegExp('(?:^|\\n)' + escaped + '(?=\\n|$)', 'g');
+    input.value = input.value
+      .replace(linePattern, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\n+|\n+$/g, '');
+    renderImagePreviews();
+    autoResize();
+    input.focus();
+  }
+
+  function renderImagePreviews() {
+    if (!imagePreviewStrip) return;
+    var urls = extractImageUrls(input.value);
+    imagePreviewStrip.innerHTML = '';
+    imagePreviewStrip.classList.toggle('has-items', urls.length > 0);
+    urls.forEach(function(url) {
+      var card = document.createElement('div');
+      card.className = 'image-preview-card';
+
+      var img = document.createElement('img');
+      img.className = 'image-preview-thumb';
+      img.src = url;
+      img.alt = 'Image preview';
+      img.loading = 'lazy';
+
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'image-preview-remove';
+      remove.setAttribute('aria-label', 'Remove image URL');
+      remove.textContent = '×';
+      remove.addEventListener('click', function() {
+        removeImageUrl(url);
+      });
+
+      card.appendChild(img);
+      card.appendChild(remove);
+      imagePreviewStrip.appendChild(card);
+    });
+  }
+
+  async function uploadImages(files) {
+    if (!files || !files.length) return;
+    var form = new FormData();
+    Array.prototype.forEach.call(files, function(file) {
+      form.append('image', file, file.name);
+    });
+
+    try {
+      var res = await fetch('/api/upload-image/' + encodeURIComponent(SESSION), {
+        method: 'POST',
+        body: form
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok || !data.saved || !data.saved.length) {
+        showStatus('Image upload failed');
+        return;
+      }
+      insertAssetUrls(data.saved);
+      showStatus(data.saved.length === 1 ? 'Image URL inserted' : 'Image URLs inserted');
+    } catch (err) {
+      showStatus('Image upload failed');
+    } finally {
+      imageInput.value = '';
+    }
+  }
+
+  async function requestScreenshot(mode) {
+    var labels = {
+      screen: 'desktop screenshot'
+    };
+
+    showStatus('Preparing ' + (labels[mode] || 'screenshot'));
+    try {
+      var res = await fetch('/api/screenshot/' + encodeURIComponent(SESSION), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: mode })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok || !data.screenshot || !data.screenshot.public_url) {
+        showStatus((data && data.error) || 'Screenshot failed');
+        return;
+      }
+      insertComposerText(data.screenshot.public_url);
+      showStatus('Screenshot URL inserted');
+    } catch (err) {
+      showStatus('Screenshot failed');
+    }
+  }
+
+  function renderWindowChoices(windows) {
+    if (!windowList) return;
+    windowList.innerHTML = '';
+    if (!windows || !windows.length) {
+      var empty = document.createElement('div');
+      empty.className = 'window-list-empty';
+      empty.textContent = 'No selectable windows found.';
+      windowList.appendChild(empty);
+      return;
+    }
+
+    windows.forEach(function(item) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'window-item';
+      btn.dataset.windowId = String(item.id);
+
+      var owner = document.createElement('div');
+      owner.className = 'window-item-owner';
+      owner.textContent = item.owner;
+
+      var title = document.createElement('div');
+      title.className = 'window-item-title';
+      title.textContent = item.title;
+
+      btn.appendChild(owner);
+      btn.appendChild(title);
+      btn.addEventListener('click', function() {
+        requestWindowScreenshot(Number(item.id));
+      });
+      windowList.appendChild(btn);
+    });
+  }
+
+  function setWindowSheetOpen(open) {
+    if (!windowSheet) return;
+    windowSheet.classList.toggle('hidden', !open);
+    windowSheet.setAttribute('aria-hidden', open ? 'false' : 'true');
+    document.body.classList.toggle('window-sheet-open', open);
+  }
+
+  async function openWindowPicker() {
+    setWindowSheetOpen(true);
+    renderWindowChoices(cachedWindows);
+    try {
+      var res = await fetch('/api/windows', { cache: 'no-store' });
+      var data = await res.json();
+      cachedWindows = (data && data.windows) || [];
+      renderWindowChoices(cachedWindows);
+    } catch (err) {
+      renderWindowChoices([]);
+      showStatus('Window list unavailable');
+    }
+  }
+
+  async function requestWindowScreenshot(windowId) {
+    if (!windowId) return;
+    showStatus('Preparing window screenshot');
+    try {
+      var res = await fetch('/api/screenshot/' + encodeURIComponent(SESSION), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'window', window_id: windowId })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok || !data.screenshot || !data.screenshot.public_url) {
+        showStatus((data && data.error) || 'Window screenshot failed');
+        return;
+      }
+      setWindowSheetOpen(false);
+      insertComposerText(data.screenshot.public_url);
+      showStatus('Window screenshot URL inserted');
+    } catch (err) {
+      showStatus('Window screenshot failed');
+    }
   }
 
   function maybeClearPendingInput(nextText) {
@@ -754,6 +1242,7 @@
     input.value = '';
     pendingSubmittedText = '';
     pendingInputSnapshot = '';
+    renderImagePreviews();
     autoResize();
     input.focus();
   }
@@ -849,14 +1338,15 @@
       return;
     }
 
-    var ok = await postJson('/api/send-text/' + encodeURIComponent(SESSION), { text: text });
+    var composedText = text;
+    var ok = await postJson('/api/send-text/' + encodeURIComponent(SESSION), { text: composedText });
     if (ok && withEnter) {
       ok = await postJson('/api/send-keys/' + encodeURIComponent(SESSION), { key: 'Enter' });
     }
 
     showStatus(ok ? 'Sent to Codex' : 'Send failed');
     if (ok) {
-      pendingSubmittedText = text;
+      pendingSubmittedText = composedText;
       pendingInputSnapshot = input.value;
       setTimeout(function() { fetchPane(true); }, 120);
     }
@@ -867,6 +1357,7 @@
       var text = await navigator.clipboard.readText();
       if (!text) return;
       input.value += text;
+      renderImagePreviews();
       autoResize();
       input.focus();
     } catch (err) {
@@ -949,9 +1440,29 @@
     });
   });
 
+  document.querySelectorAll('[data-shot]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var mode = btn.getAttribute('data-shot');
+      if (mode === 'window') {
+        openWindowPicker();
+        return;
+      }
+      requestScreenshot(mode);
+    });
+  });
+
   document.querySelectorAll('[data-action="paste"]').forEach(function(btn) {
     btn.addEventListener('click', pasteClipboard);
   });
+
+  if (imageBtn && imageInput) {
+    imageBtn.addEventListener('click', function() {
+      imageInput.click();
+    });
+    imageInput.addEventListener('change', function() {
+      uploadImages(imageInput.files);
+    });
+  }
 
   if (controlsToggle) {
     controlsToggle.addEventListener('click', function() {
@@ -964,9 +1475,42 @@
     }
   }
 
+  if (windowSheetClose) {
+    windowSheetClose.addEventListener('click', function() {
+      setWindowSheetOpen(false);
+    });
+  }
+
+  if (windowSheet) {
+    windowSheet.addEventListener('click', function(event) {
+      if (event.target === windowSheet) {
+        setWindowSheetOpen(false);
+      }
+    });
+  }
+
   sendBtn.addEventListener('click', function() { sendText(true); });
   micBtn.addEventListener('click', toggleMic);
-  input.addEventListener('input', autoResize);
+  input.addEventListener('focus', function() {
+    if (window.innerWidth < 700) {
+      document.body.classList.add('input-focus');
+      syncViewportHeight();
+      autoResize();
+    }
+  });
+  input.addEventListener('blur', function() {
+    window.setTimeout(function() {
+      if (document.activeElement !== input && !isKeyboardOpen()) {
+        document.body.classList.remove('input-focus');
+        syncViewportHeight();
+        autoResize();
+      }
+    }, 120);
+  });
+  input.addEventListener('input', function() {
+    renderImagePreviews();
+    autoResize();
+  });
   input.addEventListener('keydown', function(event) {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -983,12 +1527,15 @@
   syncViewportHeight();
   input.placeholder = '';
   input.removeAttribute('placeholder');
+  renderImagePreviews();
   autoResize();
   initMic();
   fetchPane(true);
   pollTimer = setInterval(function() { fetchPane(false); }, 1000);
   document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'visible') fetchPane(true);
+    if (document.visibilityState === 'visible') {
+      fetchPane(true);
+    }
   });
 </script>
 </body>
