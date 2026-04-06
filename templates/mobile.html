@@ -20,15 +20,24 @@
     --text: #2D2926;
     --text-secondary: #78716C;
     --text-tertiary: #A8A29E;
-    --accent: #D97706;
-    --accent-soft: #FFF7ED;
-    --accent-hover: #B45309;
+    --accent: #C2613A;
+    --accent-soft: #FDF0EB;
+    --accent-hover: #A04E2E;
     --danger: #DC2626;
     --danger-soft: #FEF2F2;
     --shadow-sm: 0 1px 3px rgba(45,41,38,0.06);
     --shadow-md: 0 4px 16px rgba(45,41,38,0.08);
     --shadow-lg: 0 8px 32px rgba(45,41,38,0.10);
-    --shadow-glow: 0 0 0 3px rgba(217,119,6,0.15);
+    --shadow-glow: 0 0 0 3px rgba(194,97,58,0.15);
+  }
+
+  /* ── Codex agent overrides ── */
+  body.agent-codex {
+    --accent: #4A90B8;
+    --accent-soft: #EDF5FA;
+    --accent-hover: #3A7499;
+    --shadow-glow: 0 0 0 3px rgba(74,144,184,0.15);
+    --surface-warm: #F8FBFD;
     --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
     --mono: 'SF Mono', ui-monospace, Menlo, monospace;
     --header-h: 44px;
@@ -198,7 +207,7 @@
     border-left: 2.5px solid var(--accent);
     padding-left: 10px;
     margin-left: -2px;
-    background: linear-gradient(90deg, rgba(217,119,6,0.04), transparent 60%);
+    background: linear-gradient(90deg, var(--accent-soft), transparent 60%);
     border-radius: 0 4px 4px 0;
   }
 
@@ -303,7 +312,7 @@
     background: var(--accent);
     color: #fff;
     display: inline-flex; align-items: center; justify-content: center;
-    box-shadow: 0 2px 8px rgba(217,119,6,0.3);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
     -webkit-tap-highlight-color: transparent;
     transition: background 0.15s, transform 0.1s;
     flex-shrink: 0;
@@ -774,6 +783,7 @@
   var SESSION_PRODUCT = "{{SESSION_PRODUCT}}";
   var AGENT = "{{SESSION_AGENT}}";
   var AGENT_QUERY = '?agent=' + encodeURIComponent(AGENT);
+  document.body.classList.add('agent-' + AGENT);
 
   function sessionApi(basePath) {
     return basePath + encodeURIComponent(SESSION) + AGENT_QUERY;
