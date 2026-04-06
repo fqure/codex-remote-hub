@@ -927,7 +927,6 @@
   var hotMicEnabled = false;
   var hotMicSendTimer = null;
   var speechTimer = null;
-  var speechLastText = '';
   var speechQueue = [];
   var speechPlaybackActive = false;
   var speechPrimed = false;
@@ -935,8 +934,12 @@
   var recognitionRestartTimer = null;
   var recognitionPausedForSpeech = false;
   var speechPlaybackToken = 0;
+  var speechReplySubmittedText = '';
+  var speechReplyLatestText = '';
+  var speechReplySpokenText = '';
+  var speechAwaitingReply = false;
   var HOT_MIC_SILENCE_DELAY = 3000;
-  var SPEECH_DEBOUNCE_DELAY = 900;
+  var SPEECH_FOLLOWUP_DELAY = 900;
 
   function isKeyboardOpen() {
     if (!window.visualViewport) return false;
@@ -1086,6 +1089,127 @@
     return nextLines.slice(i).join('\n');
   }
 
+  function splitSpeechBlocks(text) {
+    return sanitizeForSpeech(text)
+      .split(/\n{2,}/)
+      .map(function(block) { return block.trim(); })
+      .filter(Boolean);
+  }
+
+  function isUserSpeechBlock(block) {
+    return (block || '').trim().indexOf('›') === 0;
+  }
+
+  function isImageSpeechBlock(block) {
+    return /^\[Image #[0-9]+\]$/i.test((block || '').trim());
+  }
+
+  function isDividerSpeechBlock(block) {
+    return /^[\u2500-\u257f\u2014\u2015\-_=]{8,}$/.test((block || '').trim());
+  }
+
+  function isFooterSpeechBlock(block) {
+    var normalized = normalizeSpeechText(block);
+    if (!normalized) return false;
+
+    if (/(?:^| )(?:gpt|o1|o3|o4|claude|gemini|codex)\b/i.test(normalized) &&
+        /(?:% left|percent left|token|tokens)/i.test(normalized) &&
+        /(?:~\/|\/Users\/|\/Volumes\/)/.test(normalized)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function isProgressSpeechBlock(block) {
+    var normalized = normalizeSpeechText(block);
+    if (!normalized) return false;
+    if (/^•\s+i(?:'m|’m| am| have|’ve|'ve)\b/i.test(normalized)) {
+      return true;
+    }
+    if (/\bworking\b/i.test(normalized) && /\besc(?:ape)? to interrupt\b/i.test(normalized)) {
+      return true;
+    }
+    return false;
+  }
+
+  function extractSpeechReplyInfo(currentText, submittedText) {
+    var normalizedSubmitted = normalizeSpeechText(submittedText);
+    var blocks = splitSpeechBlocks(currentText);
+    var userIndex = -1;
+
+    if (!normalizedSubmitted || !blocks.length) {
+      return { text: '' };
+    }
+
+    for (var i = blocks.length - 1; i >= 0; i -= 1) {
+      if (!isUserSpeechBlock(blocks[i])) continue;
+      if (normalizeSpeechText(blocks[i]).indexOf(normalizedSubmitted) >= 0) {
+        userIndex = i;
+        break;
+      }
+    }
+
+    if (userIndex < 0) {
+      return { text: '' };
+    }
+
+    var segment = [];
+    for (var j = userIndex + 1; j < blocks.length; j += 1) {
+      var block = blocks[j];
+      if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
+        break;
+      }
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
+        continue;
+      }
+      segment.push(block);
+    }
+
+    if (!segment.length) {
+      return { text: '' };
+    }
+
+    var finalStart = 0;
+    for (var k = 0; k < segment.length; k += 1) {
+      if (isProgressSpeechBlock(segment[k])) {
+        finalStart = k + 1;
+      }
+    }
+
+    var finalBlocks = segment.slice(finalStart).filter(function(block) {
+      return !isProgressSpeechBlock(block);
+    });
+    if (!finalBlocks.length) {
+      return { text: '' };
+    }
+
+    return {
+      text: normalizeSpeechText(finalBlocks.join('\n\n')).replace(/^[\s:;,.!?\-•]+/, '').trim()
+    };
+  }
+
+  function extractSpeechDelta(spokenText, replyText) {
+    var spoken = normalizeSpeechText(spokenText);
+    var reply = normalizeSpeechText(replyText);
+    if (!reply) return '';
+    if (!spoken) return reply;
+    if (reply === spoken) return '';
+    if (reply.indexOf(spoken) === 0) {
+      return reply.slice(spoken.length).replace(/^[\s:;,.!?\-•]+/, '').trim();
+    }
+    return reply;
+  }
+
+  function resetSpeechReplyTracking() {
+    clearTimeout(speechTimer);
+    speechTimer = null;
+    speechReplySubmittedText = '';
+    speechReplyLatestText = '';
+    speechReplySpokenText = '';
+    speechAwaitingReply = false;
+  }
+
   function refreshMicButtonState() {
     if (!hotMicBtn) return;
     hotMicBtn.classList.toggle('hot-mic', hotMicEnabled);
@@ -1152,6 +1276,13 @@
     scheduleRecognitionRestart(220);
   }
 
+  function scheduleSpeechContinuationCheck(delay) {
+    clearTimeout(speechTimer);
+    speechTimer = setTimeout(function() {
+      checkForReplyContinuation();
+    }, typeof delay === 'number' ? delay : SPEECH_FOLLOWUP_DELAY);
+  }
+
   function stopSpeechPlayback() {
     clearTimeout(speechTimer);
     speechTimer = null;
@@ -1211,7 +1342,12 @@
     }
 
     if (!speechQueue.length) {
-      resumeRecognitionAfterSpeech();
+      speechPlaybackActive = false;
+      if (speechAwaitingReply) {
+        scheduleSpeechContinuationCheck();
+      } else {
+        resumeRecognitionAfterSpeech();
+      }
       return;
     }
 
@@ -1256,28 +1392,59 @@
     }
   }
 
-  function scheduleSpeechFromPane(nextText, submittedText) {
-    if (!hotMicEnabled || !('speechSynthesis' in window)) return;
+  function speakPendingReplyDelta() {
+    if (!hotMicEnabled || !speechAwaitingReply) return false;
+    if (speechPlaybackActive || speechQueue.length) return false;
+
+    var replyInfo = extractSpeechReplyInfo(
+      speechReplyLatestText,
+      speechReplySubmittedText
+    );
+    var deltaText = extractSpeechDelta(speechReplySpokenText, replyInfo.text);
+    if (!deltaText) {
+      return false;
+    }
+
     clearTimeout(speechTimer);
-    speechTimer = setTimeout(function() {
-      if (!hotMicEnabled) return;
+    speechTimer = null;
+    speechReplySpokenText = replyInfo.text;
+    speakText(deltaText);
+    return true;
+  }
 
-      var delta = paneTextDelta(speechLastText, nextText);
-      var normalizedSubmitted = normalizeSpeechText(submittedText);
-      var normalizedDelta = normalizeSpeechText(delta);
+  async function checkForReplyContinuation() {
+    clearTimeout(speechTimer);
+    speechTimer = null;
 
-      while (normalizedSubmitted && normalizedDelta.indexOf(normalizedSubmitted) === 0) {
-        normalizedDelta = normalizedDelta.slice(normalizedSubmitted.length).trim();
-      }
+    if (!hotMicEnabled || !speechAwaitingReply) {
+      return;
+    }
 
-      if (!normalizedDelta) {
-        speechLastText = nextText || '';
-        return;
-      }
+    if (speechPlaybackActive || speechQueue.length) {
+      return;
+    }
 
-      speechLastText = nextText || '';
-      speakText(normalizedDelta);
-    }, SPEECH_DEBOUNCE_DELAY);
+    await fetchPane(true);
+    if (!hotMicEnabled || !speechAwaitingReply) {
+      return;
+    }
+
+    if (speechPlaybackActive || speechQueue.length) {
+      return;
+    }
+
+    if (speakPendingReplyDelta()) {
+      return;
+    }
+
+    resetSpeechReplyTracking();
+    resumeRecognitionAfterSpeech();
+  }
+
+  function scheduleSpeechFromPane(nextText) {
+    if (!hotMicEnabled || !speechAwaitingReply || !('speechSynthesis' in window)) return;
+    speechReplyLatestText = nextText || '';
+    speakPendingReplyDelta();
   }
 
   function scheduleHotMicSend() {
@@ -1305,7 +1472,7 @@
     recognitionRestartTimer = null;
 
     if (enabled) {
-      speechLastText = lastText || '';
+      resetSpeechReplyTracking();
       recognitionPausedForSpeech = false;
       primeSpeechSynthesis();
       if (document.activeElement === input) {
@@ -1317,6 +1484,7 @@
       startRecognition();
     } else {
       stopSpeechPlayback();
+      resetSpeechReplyTracking();
       recognitionPausedForSpeech = false;
       stopRecognition();
       showStatus('Hot mic off');
@@ -1657,10 +1825,9 @@
       var nextText = data.text || '';
       var nextCursorY = typeof data.cursor_y === 'number' ? data.cursor_y : null;
       if (nextText !== lastText || nextCursorY !== lastCursorY) {
-        var submittedForSpeech = pendingSubmittedText;
         renderPaneText(nextText);
         if (nextText !== lastText) {
-          scheduleSpeechFromPane(nextText, submittedForSpeech);
+          scheduleSpeechFromPane(nextText);
         }
         maybeClearPendingInput(nextText);
         lastText = nextText;
@@ -1750,6 +1917,15 @@
       primeSpeechSynthesis();
       pendingSubmittedText = composedText;
       pendingInputSnapshot = input.value;
+      if (hotMicEnabled) {
+        stopSpeechPlayback();
+        clearTimeout(speechTimer);
+        speechTimer = null;
+        speechReplySubmittedText = composedText;
+        speechReplyLatestText = lastText || '';
+        speechReplySpokenText = '';
+        speechAwaitingReply = true;
+      }
       if (hotMicEnabled) {
         input.value = '';
         renderImagePreviews();
