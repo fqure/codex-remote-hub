@@ -2030,15 +2030,15 @@ def render_hub(host: str) -> str:
     for s in sessions:
         status_class = "active" if s["has_ttyd"] else "idle"
         attached_badge = '<span class="badge active">connected</span>' if s["attached"] else ""
-        agent_badge = f'<span class="badge agent-badge">{s["agent_label"]}</span>'
+        agent_badge = ''
         session_cards += f"""
-        <div class="card">
+        <div class="card card-agent-{s['agent']}">
           <a href="/start/{s['name']}?agent={s['agent']}" class="card-link">
             <div class="card-left">
               <span class="status-dot {status_class}"></span>
               <div>
                 <div class="card-name">{s['name']}</div>
-                <div class="card-meta">{s['agent_label']} &middot; port {s['port']} &middot; {s['time']}</div>
+                <div class="card-meta">port {s['port']} &middot; {s['time']}</div>
               </div>
             </div>
             <div class="card-right">

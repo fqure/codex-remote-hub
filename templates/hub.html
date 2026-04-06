@@ -25,6 +25,10 @@
     --danger-bg: rgba(220, 38, 38, 0.06);
     --success: #16A34A;
     --success-bg: rgba(22, 163, 74, 0.08);
+    --codex: #4A90B8;
+    --codex-soft: rgba(74, 144, 184, 0.10);
+    --claude: #C2613A;
+    --claude-soft: rgba(194, 97, 58, 0.10);
     --radius: 14px;
     --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
     --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
@@ -232,6 +236,34 @@
     color: var(--success);
   }
 
+  /* ── Agent color coding ── */
+  .card-agent-codex { border-left-color: var(--codex); }
+  .card-agent-claude { border-left-color: var(--claude); }
+  .card-agent-codex .status-dot.active {
+    background: var(--codex);
+    box-shadow: 0 0 8px rgba(74, 144, 184, 0.4);
+  }
+  .card-agent-claude .status-dot.active {
+    background: var(--claude);
+    box-shadow: 0 0 8px rgba(194, 97, 58, 0.4);
+  }
+  .capture-card.card-agent-codex {
+    border-color: rgba(74, 144, 184, 0.25);
+    border-left: 3px solid var(--codex);
+  }
+  .capture-card.card-agent-claude {
+    border-color: rgba(194, 97, 58, 0.25);
+    border-left: 3px solid var(--claude);
+  }
+  .capture-dot.dot-codex {
+    background: var(--codex); box-shadow: 0 0 8px rgba(74, 144, 184, 0.4);
+  }
+  .capture-dot.dot-claude {
+    background: var(--claude); box-shadow: 0 0 8px rgba(194, 97, 58, 0.4);
+  }
+  .saved-project.agent-codex { border-left-color: var(--codex); }
+  .saved-project.agent-claude { border-left-color: var(--claude); }
+
   .arrow {
     color: var(--text-dim);
     font-size: 20px;
@@ -315,10 +347,16 @@
   }
 
   .agent-chip.active {
-    background: linear-gradient(135deg, var(--accent), #F59E0B);
     color: #fff;
-    box-shadow: 0 1px 3px rgba(217, 119, 6, 0.28);
     font-weight: 700;
+  }
+  .agent-chip.active[data-agent="codex"] {
+    background: linear-gradient(135deg, var(--codex), #6BB0D4);
+    box-shadow: 0 1px 3px rgba(74, 144, 184, 0.3);
+  }
+  .agent-chip.active[data-agent="claude"] {
+    background: linear-gradient(135deg, var(--claude), #D4845E);
+    box-shadow: 0 1px 3px rgba(194, 97, 58, 0.3);
   }
 
   .agent-chip:not(.active):active {
@@ -1179,7 +1217,7 @@
 
       sessions.forEach(function(s) {
         var card = document.createElement('div');
-        card.className = 'capture-card';
+        card.className = 'capture-card card-agent-' + (s.agent || 'codex');
         card.style.animation = 'fadeIn 0.3s ease-out backwards';
 
         var link = document.createElement('a');
@@ -1197,7 +1235,7 @@
         left.className = 'card-left';
 
         var dot = document.createElement('span');
-        dot.className = 'capture-dot';
+        dot.className = 'capture-dot dot-' + (s.agent || 'codex');
 
         var info = document.createElement('div');
 
@@ -1220,7 +1258,7 @@
 
         var badge = document.createElement('span');
         badge.className = 'capture-badge';
-        badge.textContent = (s.agent_label || 'capture') + ' capture';
+        badge.textContent = 'capture';
 
         var arrow = document.createElement('span');
         arrow.className = 'arrow';
@@ -1264,7 +1302,7 @@
 
       projects.forEach(function(project) {
         var details = document.createElement('details');
-        details.className = 'saved-project';
+        details.className = 'saved-project agent-' + (project.agent || 'codex');
 
         var summary = document.createElement('summary');
         summary.className = 'saved-summary';
@@ -1278,7 +1316,7 @@
 
         var meta = document.createElement('div');
         meta.className = 'saved-summary-meta';
-        meta.textContent = (project.agent_label || project.agent) + ' \u00b7 ' + project.thread_count + (project.thread_count === 1 ? ' thread' : ' threads');
+        meta.textContent = project.thread_count + (project.thread_count === 1 ? ' thread' : ' threads');
 
         left.appendChild(name);
         left.appendChild(meta);
@@ -1288,7 +1326,7 @@
 
         var badge = document.createElement('span');
         badge.className = 'capture-badge';
-        badge.textContent = (project.agent_label || project.agent) + ' resume';
+        badge.textContent = 'resume';
 
         var arrow = document.createElement('span');
         arrow.className = 'arrow';
