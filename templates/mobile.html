@@ -6,30 +6,45 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0a0a0f">
+<meta name="theme-color" content="#0d0f14">
 <title>{{SESSION_NAME}} — Codex Remote Hub Mobile</title>
 <style>
   :root {
-    --bg: #0a0a0f;
-    --surface: rgba(18, 19, 26, 0.96);
-    --surface-2: #11131b;
-    --surface-3: #171a24;
-    --border: #262936;
-    --text: #ece9e2;
-    --text-dim: #928f86;
-    --accent: #10a37f;
-    --accent-2: #13b48d;
-    --danger: #ef4444;
-    --success: #4ade80;
-    --shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
-    --radius: 18px;
-    --mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    --header-h: 58px;
-    --composer-h: 152px;
+    --bg: #0d0f14;
+    --surface: rgba(22, 24, 31, 0.75);
+    --surface-2: #1e212b;
+    --surface-3: #262a36;
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #e2e4e9;
+    --text-dim: #8b92a5;
+    --accent: #10b981;
+    --accent-2: #059669;
+    --danger: #f43f5e;
+    --shadow-glow: 0 0 24px rgba(16, 185, 129, 0.15);
+    --shadow-mic: 0 0 32px rgba(244, 63, 94, 0.25);
+    --radius: 16px;
+    --header-h: 60px;
+    --input-h: 44px;
+    --mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+    --sans: 'IBM Plex Sans', 'Avenir Next', 'Segoe UI', sans-serif;
     --app-height: 100dvh;
-    --input-h: 40px;
     --icon-btn-h: 45px;
+  }
+
+  @keyframes mic-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); }
+    70% { box-shadow: 0 0 0 20px rgba(244, 63, 94, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+  }
+
+  @keyframes wave {
+    0%, 100% { height: 8px; }
+    50% { height: 24px; }
+  }
+
+  @keyframes pulse-text {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -60,8 +75,8 @@
     display: flex;
     flex-direction: column;
     background:
-      radial-gradient(circle at top left, rgba(16, 163, 127, 0.08), transparent 28%),
-      radial-gradient(circle at top right, rgba(255, 255, 255, 0.03), transparent 22%),
+      radial-gradient(circle at top left, rgba(16, 185, 129, 0.1), transparent 30%),
+      radial-gradient(circle at top right, rgba(255, 255, 255, 0.03), transparent 24%),
       var(--bg);
   }
 
@@ -72,8 +87,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    background: linear-gradient(180deg, rgba(10, 10, 15, 0.98), rgba(10, 10, 15, 0.92));
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: linear-gradient(180deg, rgba(13, 15, 20, 0.98), rgba(13, 15, 20, 0.88));
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -114,25 +129,12 @@
     user-select: none;
   }
 
-  .hot-mic-btn.hot-mic {
-    background: rgba(17, 19, 27, 0.96) !important;
-    border-color: rgba(239, 68, 68, 0.72) !important;
-    color: #ff4d4d !important;
-    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18), 0 0 18px rgba(239, 68, 68, 0.24);
-  }
-
   .hot-mic-btn .btn-icon {
     fill: none;
     stroke: currentColor;
     stroke-width: 1.65;
     stroke-linecap: round;
     stroke-linejoin: round;
-  }
-
-  .hot-mic-btn.hot-mic .btn-icon,
-  .hot-mic-btn.hot-mic .btn-icon path {
-    fill: none !important;
-    stroke: #ff4d4d !important;
   }
 
   .session-wrap {
@@ -191,10 +193,10 @@
   .viewport {
     flex: 1;
     min-height: 0;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(10, 11, 16, 0.85);
+    border: 1px solid var(--border);
+    background: rgba(10, 11, 16, 0.76);
     border-radius: 22px;
-    box-shadow: var(--shadow);
+    box-shadow: var(--shadow-glow);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -240,7 +242,7 @@
   }
 
   .pane-block.user {
-    color: #10a37f;
+    color: var(--accent);
   }
 
   .pane-empty {
@@ -249,25 +251,24 @@
 
   .composer-shell {
     padding: 8px 12px calc(env(safe-area-inset-bottom) + 10px);
-    background: linear-gradient(180deg, rgba(10, 10, 15, 0), rgba(10, 10, 15, 0.86) 10%, rgba(10, 10, 15, 0.98) 30%);
+    background: transparent;
     flex-shrink: 0;
     width: 100%;
-    max-width: 100%;
-    overflow: hidden;
+    position: relative;
+    z-index: 10;
   }
 
   .composer {
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
     background: var(--surface);
-    border-radius: 22px;
-    box-shadow: var(--shadow);
-    padding: 9px;
-    display: grid;
-    gap: 8px;
-    width: 100%;
-    max-width: 100%;
-    overflow: hidden;
-    margin-top: 5px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: var(--radius);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   }
 
   .tool-row,
@@ -282,16 +283,14 @@
   }
 
   .input-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    display: flex;
+    flex-wrap: nowrap;
     align-items: center;
-    min-width: 0;
-    gap: 0px;
-    width: 100%;
-    max-width: 100%;
+    gap: 10px;
   }
 
   .input-stack {
+    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -369,21 +368,44 @@
   }
 
   .controls-toggle {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--text-dim);
-    font: 700 11px/1 var(--mono);
-    letter-spacing: 0.12em;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    padding: 6px 6px 6px 14px;
+    color: var(--text);
+    font: 600 12px/1 var(--sans);
     text-transform: uppercase;
+    letter-spacing: 0.05em;
     display: inline-flex;
     align-items: center;
-    justify-content: flex-start;
-    gap: 4px;
+    gap: 10px;
+    cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    margin-top: 5px;
-    margin-bottom: 5px;
-    margin-left: 5px;
+    transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+    margin: 4px 0;
+  }
+
+  .controls-toggle:active {
+    transform: scale(0.95);
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .toggle-icon-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.3);
+    transition: background 0.3s ease;
+  }
+
+  .toggle-icon {
+    width: 14px;
+    height: 14px;
+    transform: rotate(180deg);
+    transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   .controls-upload-btn {
@@ -393,14 +415,18 @@
     color: var(--text-dim);
   }
 
-  .controls-toggle .chevron {
-    display: inline-block;
-    transition: transform 0.18s ease;
-    font: 700 11px/1 var(--mono);
+  .controls-shell.collapsed .controls-toggle {
+    background: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.2);
+    color: var(--accent);
   }
 
-  .controls-shell.collapsed .controls-toggle .chevron {
-    transform: rotate(90deg);
+  .controls-shell.collapsed .toggle-icon-wrap {
+    background: rgba(16, 185, 129, 0.2);
+  }
+
+  .controls-shell.collapsed .toggle-icon {
+    transform: rotate(0deg);
   }
 
   .controls-shell.collapsed {
@@ -452,8 +478,8 @@
 
   .enter-btn,
   .send-btn {
-    border-color: rgba(16, 163, 127, 0.45);
-    background: rgba(16, 163, 127, 0.18);
+    border-color: rgba(16, 185, 129, 0.45);
+    background: rgba(16, 185, 129, 0.18);
     color: #dffff5;
   }
 
@@ -489,7 +515,7 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 22px;
     background: rgba(18, 19, 26, 0.98);
-    box-shadow: var(--shadow);
+    box-shadow: var(--shadow-glow);
     padding: 14px;
     min-height: 0;
     overflow: hidden;
@@ -568,8 +594,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 0;
-    background: transparent;
+    border: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.2);
     box-shadow: none;
   }
 
@@ -578,21 +604,21 @@
     width: 100%;
     min-width: 0;
     min-height: var(--input-h);
-    max-height: 84px;
+    max-height: 120px;
     resize: none;
-    border: 1px solid rgba(255, 255, 255, 0.96);
-    background: #0e1017;
-    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid transparent;
+    border-radius: 12px;
     color: var(--text);
-    padding: 10px 11px;
+    padding: 12px 14px;
     font: 500 16px/1.35 var(--sans);
     outline: none;
-    transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    transition: all 0.2s ease;
   }
 
   .composer-input:focus {
-    border-color: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.96);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.15);
   }
 
   .send-btn {
@@ -607,6 +633,33 @@
     min-width: var(--icon-btn-h);
     padding: 0;
     font-size: 13px;
+    transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  }
+
+  body.hot-mic-active .composer-input {
+    display: none;
+  }
+
+  body.hot-mic-active .hot-mic-btn {
+    background: var(--surface-2);
+    border-color: var(--danger);
+    color: var(--danger);
+    border-radius: 50%;
+    transform: scale(1.15);
+    animation: mic-pulse 1.5s infinite ease-out;
+    box-shadow: var(--shadow-mic);
+  }
+
+  body.hot-mic-active .input-row::before {
+    content: "Listening...";
+    flex: 1;
+    color: var(--danger);
+    font-family: var(--mono);
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    padding-left: 12px;
+    animation: pulse-text 2s infinite;
   }
 
   .btn-icon {
@@ -619,7 +672,7 @@
     margin: 0;
   }
 
-  @media (max-width: 699px) {
+  @media (max-width: 767px) {
     .main {
       padding: 8px 8px 0;
       gap: 6px;
@@ -633,72 +686,12 @@
       padding: 10px;
     }
 
-    .composer-shell {
-      padding: 0;
-    }
-
     .composer {
       margin: 5px 2px 0;
       padding: 4px;
       gap: 3px;
       border-radius: 16px;
     }
-
-    .input-row {
-      grid-template-columns: minmax(0, 1fr) 45px 45px;
-      gap: 2px;
-    }
-
-    body.input-focus .header,
-    body.input-focus .main {
-      display: none;
-    }
-
-    body.input-focus .composer-shell {
-      position: fixed;
-      inset: 0;
-      z-index: 50;
-      padding: calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px);
-      background:
-        linear-gradient(180deg, rgba(10, 10, 15, 0.98), rgba(10, 10, 15, 0.98)),
-        var(--bg);
-    }
-
-    body.input-focus .composer {
-      margin: 0;
-      height: 100%;
-      max-height: none;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      padding: 8px;
-    }
-
-    body.input-focus .controls-shell {
-      display: none;
-    }
-
-    body.input-focus .input-row {
-      flex: 1;
-      min-height: 0;
-      align-items: stretch;
-    }
-
-    body.input-focus .input-stack {
-      flex: 1;
-      min-height: 0;
-    }
-
-    body.input-focus .composer-input {
-      flex: 1;
-      min-height: 0;
-      height: 100% !important;
-      max-height: none;
-      font-size: 16px;
-      line-height: 1.45;
-      padding: 14px 13px;
-    }
-
   }
 
   body.keyboard-open .header {
@@ -733,70 +726,57 @@
     display: contents;
   }
 
-  @media (min-width: 700px) {
-    :root {
-      --composer-h: 154px;
+  @media (min-width: 768px) {
+    .app {
+      flex-direction: row;
+      padding: 16px;
+      gap: 16px;
+      background: var(--bg);
+    }
+
+    .header {
+      display: none;
     }
 
     .main {
-      padding: 18px 18px 0;
-      gap: 14px;
-    }
-
-    .viewport {
-      border-radius: 26px;
-    }
-
-    .pane-wrap {
-      padding: 20px;
-    }
-
-    .pane {
-      font-size: 14px;
-      line-height: 1.5;
+      flex: 1;
+      padding: 0;
+      height: 100%;
     }
 
     .composer-shell {
-      padding: 12px 18px calc(env(safe-area-inset-bottom) + 14px);
+      width: 340px;
+      padding: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
     }
 
     .composer {
-      grid-template-columns: minmax(0, 1fr) auto;
-      grid-template-areas:
-        "tools tools"
-        "nav nav"
-        "input input";
-      align-items: stretch;
-      padding: 12px;
+      height: auto;
+      max-height: 100%;
+      grid-template-columns: 1fr;
+      grid-template-areas: none;
+      display: flex;
     }
 
     .tool-row,
     .nav-row {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(3, 1fr);
       gap: 8px;
       overflow: visible;
     }
 
-    .tool-row { grid-area: tools; }
-    .nav-row { grid-area: nav; }
-    .input-row { grid-area: input; }
-
-    .tool-row .chip-btn,
-    .nav-row .chip-btn {
-      width: 100%;
-      min-width: 0;
-      padding: 0 8px;
+    .input-row {
+      flex-direction: column;
+      align-items: stretch;
     }
 
     .composer-input {
-      min-height: 64px;
-      max-height: 132px;
-      font-size: 17px;
-    }
-
-    .send-btn {
-      min-width: 90px;
+      min-height: 120px;
+      max-height: 260px;
     }
   }
 </style>
@@ -829,8 +809,12 @@
         <div class="controls-shell" id="controls-shell">
           <div class="controls-toggle-row">
             <button type="button" class="controls-toggle" id="controls-toggle" aria-expanded="true" aria-label="Collapse controls">
-              <span>Controls</span>
-              <span class="chevron">⌃</span>
+              <span class="toggle-text">Controls</span>
+              <div class="toggle-icon-wrap">
+                <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </div>
             </button>
             <div class="controls-header-actions">
               <button id="image-btn" class="ghost-btn icon-action-btn controls-upload-btn" type="button" aria-label="Upload image">
@@ -906,7 +890,6 @@
   var hotMicBtn = document.getElementById('hot-mic-btn');
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
-  var composerShell = document.querySelector('.composer-shell');
   var controlsShell = document.getElementById('controls-shell');
   var controlsToggle = document.getElementById('controls-toggle');
   var imagePreviewStrip = document.getElementById('image-preview-strip');
@@ -927,16 +910,21 @@
   var hotMicEnabled = false;
   var hotMicSendTimer = null;
   var speechTimer = null;
-  var speechLastText = '';
   var speechQueue = [];
   var speechPlaybackActive = false;
   var speechPrimed = false;
   var speechVoice = null;
+  var hotMicComposerExpanded = false;
   var recognitionRestartTimer = null;
   var recognitionPausedForSpeech = false;
   var speechPlaybackToken = 0;
+  var speechReplySubmittedText = '';
+  var speechReplyLatestText = '';
+  var speechReplySpokenText = '';
+  var speechAwaitingReply = false;
+  var suppressInputFocusOnMicStop = false;
   var HOT_MIC_SILENCE_DELAY = 3000;
-  var SPEECH_DEBOUNCE_DELAY = 900;
+  var SPEECH_FOLLOWUP_DELAY = 900;
 
   function isKeyboardOpen() {
     if (!window.visualViewport) return false;
@@ -950,22 +938,14 @@
       : window.innerHeight;
     document.documentElement.style.setProperty('--app-height', Math.round(height) + 'px');
     document.body.classList.toggle('keyboard-open', keyboardOpen);
-    if (composerShell) {
-      document.documentElement.style.setProperty('--composer-h', composerShell.offsetHeight + 'px');
-    }
   }
 
   function autoResize() {
-    if (document.body.classList.contains('input-focus') && window.innerWidth < 700) {
-      input.style.height = '100%';
-      syncViewportHeight();
-      return;
-    }
     var minHeight = parseFloat(getComputedStyle(input).minHeight) || 0;
     input.style.height = '0px';
     var targetHeight = !input.value.trim()
       ? minHeight
-      : Math.min(input.scrollHeight, window.innerWidth >= 700 ? 132 : 84);
+      : Math.min(input.scrollHeight, window.innerWidth >= 768 ? 260 : 120);
     input.style.height = targetHeight + 'px';
     syncViewportHeight();
   }
@@ -1086,20 +1066,141 @@
     return nextLines.slice(i).join('\n');
   }
 
+  function splitSpeechBlocks(text) {
+    return sanitizeForSpeech(text)
+      .split(/\n{2,}/)
+      .map(function(block) { return block.trim(); })
+      .filter(Boolean);
+  }
+
+  function isUserSpeechBlock(block) {
+    return (block || '').trim().indexOf('›') === 0;
+  }
+
+  function isImageSpeechBlock(block) {
+    return /^\[Image #[0-9]+\]$/i.test((block || '').trim());
+  }
+
+  function isDividerSpeechBlock(block) {
+    return /^[\u2500-\u257f\u2014\u2015\-_=]{8,}$/.test((block || '').trim());
+  }
+
+  function isFooterSpeechBlock(block) {
+    var normalized = normalizeSpeechText(block);
+    if (!normalized) return false;
+
+    if (/(?:^| )(?:gpt|o1|o3|o4|claude|gemini|codex)\b/i.test(normalized) &&
+        /(?:% left|percent left|token|tokens)/i.test(normalized) &&
+        /(?:~\/|\/Users\/|\/Volumes\/)/.test(normalized)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function isProgressSpeechBlock(block) {
+    var normalized = normalizeSpeechText(block);
+    if (!normalized) return false;
+    if (/^•\s+i(?:'m|’m| am| have|’ve|'ve)\b/i.test(normalized)) {
+      return true;
+    }
+    if (/\bworking\b/i.test(normalized) && /\besc(?:ape)? to interrupt\b/i.test(normalized)) {
+      return true;
+    }
+    return false;
+  }
+
+  function extractSpeechReplyInfo(currentText, submittedText) {
+    var normalizedSubmitted = normalizeSpeechText(submittedText);
+    var blocks = splitSpeechBlocks(currentText);
+    var userIndex = -1;
+
+    if (!normalizedSubmitted || !blocks.length) {
+      return { text: '' };
+    }
+
+    for (var i = blocks.length - 1; i >= 0; i -= 1) {
+      if (!isUserSpeechBlock(blocks[i])) continue;
+      if (normalizeSpeechText(blocks[i]).indexOf(normalizedSubmitted) >= 0) {
+        userIndex = i;
+        break;
+      }
+    }
+
+    if (userIndex < 0) {
+      return { text: '' };
+    }
+
+    var segment = [];
+    for (var j = userIndex + 1; j < blocks.length; j += 1) {
+      var block = blocks[j];
+      if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
+        break;
+      }
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
+        continue;
+      }
+      segment.push(block);
+    }
+
+    if (!segment.length) {
+      return { text: '' };
+    }
+
+    var finalStart = 0;
+    for (var k = 0; k < segment.length; k += 1) {
+      if (isProgressSpeechBlock(segment[k])) {
+        finalStart = k + 1;
+      }
+    }
+
+    var finalBlocks = segment.slice(finalStart).filter(function(block) {
+      return !isProgressSpeechBlock(block);
+    });
+    if (!finalBlocks.length) {
+      return { text: '' };
+    }
+
+    return {
+      text: normalizeSpeechText(finalBlocks.join('\n\n')).replace(/^[\s:;,.!?\-•]+/, '').trim()
+    };
+  }
+
+  function extractSpeechDelta(spokenText, replyText) {
+    var spoken = normalizeSpeechText(spokenText);
+    var reply = normalizeSpeechText(replyText);
+    if (!reply) return '';
+    if (!spoken) return reply;
+    if (reply === spoken) return '';
+    if (reply.indexOf(spoken) === 0) {
+      return reply.slice(spoken.length).replace(/^[\s:;,.!?\-•]+/, '').trim();
+    }
+    return reply;
+  }
+
+  function resetSpeechReplyTracking() {
+    clearTimeout(speechTimer);
+    speechTimer = null;
+    speechReplySubmittedText = '';
+    speechReplyLatestText = '';
+    speechReplySpokenText = '';
+    speechAwaitingReply = false;
+  }
+
+  function syncComposerExpandedState() {
+    if (window.innerWidth >= 768) return;
+    syncViewportHeight();
+    autoResize();
+  }
+
+  function setHotMicComposerExpanded(expanded) {
+    hotMicComposerExpanded = !!expanded;
+    syncComposerExpandedState();
+  }
+
   function refreshMicButtonState() {
     if (!hotMicBtn) return;
     hotMicBtn.classList.toggle('hot-mic', hotMicEnabled);
-    hotMicBtn.style.background = hotMicEnabled ? 'rgba(17, 19, 27, 0.96)' : '';
-    hotMicBtn.style.borderColor = hotMicEnabled ? 'rgba(239, 68, 68, 0.72)' : '';
-    hotMicBtn.style.color = hotMicEnabled ? '#ff4d4d' : '';
-    hotMicBtn.style.boxShadow = hotMicEnabled
-      ? '0 0 0 1px rgba(239, 68, 68, 0.18), 0 0 18px rgba(239, 68, 68, 0.24)'
-      : '';
-    var micIcon = hotMicBtn.querySelector('.btn-icon');
-    if (micIcon) {
-      micIcon.style.fill = 'none';
-      micIcon.style.stroke = hotMicEnabled ? '#ff4d4d' : '';
-    }
     hotMicBtn.setAttribute(
       'aria-label',
       hotMicEnabled ? 'Stop hot mic' : 'Start hot mic'
@@ -1150,6 +1251,13 @@
     speechPlaybackActive = false;
     recognitionPausedForSpeech = false;
     scheduleRecognitionRestart(220);
+  }
+
+  function scheduleSpeechContinuationCheck(delay) {
+    clearTimeout(speechTimer);
+    speechTimer = setTimeout(function() {
+      checkForReplyContinuation();
+    }, typeof delay === 'number' ? delay : SPEECH_FOLLOWUP_DELAY);
   }
 
   function stopSpeechPlayback() {
@@ -1211,7 +1319,12 @@
     }
 
     if (!speechQueue.length) {
-      resumeRecognitionAfterSpeech();
+      speechPlaybackActive = false;
+      if (speechAwaitingReply) {
+        scheduleSpeechContinuationCheck();
+      } else {
+        resumeRecognitionAfterSpeech();
+      }
       return;
     }
 
@@ -1256,28 +1369,59 @@
     }
   }
 
-  function scheduleSpeechFromPane(nextText, submittedText) {
-    if (!hotMicEnabled || !('speechSynthesis' in window)) return;
+  function speakPendingReplyDelta() {
+    if (!hotMicEnabled || !speechAwaitingReply) return false;
+    if (speechPlaybackActive || speechQueue.length) return false;
+
+    var replyInfo = extractSpeechReplyInfo(
+      speechReplyLatestText,
+      speechReplySubmittedText
+    );
+    var deltaText = extractSpeechDelta(speechReplySpokenText, replyInfo.text);
+    if (!deltaText) {
+      return false;
+    }
+
     clearTimeout(speechTimer);
-    speechTimer = setTimeout(function() {
-      if (!hotMicEnabled) return;
+    speechTimer = null;
+    speechReplySpokenText = replyInfo.text;
+    speakText(deltaText);
+    return true;
+  }
 
-      var delta = paneTextDelta(speechLastText, nextText);
-      var normalizedSubmitted = normalizeSpeechText(submittedText);
-      var normalizedDelta = normalizeSpeechText(delta);
+  async function checkForReplyContinuation() {
+    clearTimeout(speechTimer);
+    speechTimer = null;
 
-      while (normalizedSubmitted && normalizedDelta.indexOf(normalizedSubmitted) === 0) {
-        normalizedDelta = normalizedDelta.slice(normalizedSubmitted.length).trim();
-      }
+    if (!hotMicEnabled || !speechAwaitingReply) {
+      return;
+    }
 
-      if (!normalizedDelta) {
-        speechLastText = nextText || '';
-        return;
-      }
+    if (speechPlaybackActive || speechQueue.length) {
+      return;
+    }
 
-      speechLastText = nextText || '';
-      speakText(normalizedDelta);
-    }, SPEECH_DEBOUNCE_DELAY);
+    await fetchPane(true);
+    if (!hotMicEnabled || !speechAwaitingReply) {
+      return;
+    }
+
+    if (speechPlaybackActive || speechQueue.length) {
+      return;
+    }
+
+    if (speakPendingReplyDelta()) {
+      return;
+    }
+
+    resetSpeechReplyTracking();
+    resumeRecognitionAfterSpeech();
+  }
+
+  function scheduleSpeechFromPane(nextText) {
+    if (!hotMicEnabled || !speechAwaitingReply || !('speechSynthesis' in window)) return;
+    speechReplyLatestText = nextText || '';
+    speakPendingReplyDelta();
   }
 
   function scheduleHotMicSend() {
@@ -1293,31 +1437,39 @@
   function setHotMicEnabled(enabled) {
     if (enabled && (!SpeechRecognitionCtor || !recognition)) {
       hotMicEnabled = false;
+      document.body.classList.remove('hot-mic-active');
       refreshMicButtonState();
       showStatus('Speech recognition unavailable here');
       return;
     }
 
     hotMicEnabled = enabled;
+    document.body.classList.toggle('hot-mic-active', enabled);
     clearTimeout(hotMicSendTimer);
     hotMicSendTimer = null;
     clearTimeout(recognitionRestartTimer);
     recognitionRestartTimer = null;
 
     if (enabled) {
-      speechLastText = lastText || '';
+      suppressInputFocusOnMicStop = false;
+      resetSpeechReplyTracking();
       recognitionPausedForSpeech = false;
       primeSpeechSynthesis();
+      setHotMicComposerExpanded(true);
       if (document.activeElement === input) {
         input.blur();
-        document.body.classList.remove('input-focus');
-        syncViewportHeight();
       }
       showStatus('Hot mic on');
       startRecognition();
     } else {
+      suppressInputFocusOnMicStop = true;
       stopSpeechPlayback();
+      resetSpeechReplyTracking();
       recognitionPausedForSpeech = false;
+      setHotMicComposerExpanded(false);
+      if (document.activeElement === input) {
+        input.blur();
+      }
       stopRecognition();
       showStatus('Hot mic off');
     }
@@ -1657,10 +1809,9 @@
       var nextText = data.text || '';
       var nextCursorY = typeof data.cursor_y === 'number' ? data.cursor_y : null;
       if (nextText !== lastText || nextCursorY !== lastCursorY) {
-        var submittedForSpeech = pendingSubmittedText;
         renderPaneText(nextText);
         if (nextText !== lastText) {
-          scheduleSpeechFromPane(nextText, submittedForSpeech);
+          scheduleSpeechFromPane(nextText);
         }
         maybeClearPendingInput(nextText);
         lastText = nextText;
@@ -1751,9 +1902,20 @@
       pendingSubmittedText = composedText;
       pendingInputSnapshot = input.value;
       if (hotMicEnabled) {
+        stopSpeechPlayback();
+        clearTimeout(speechTimer);
+        speechTimer = null;
+        speechReplySubmittedText = composedText;
+        speechReplyLatestText = lastText || '';
+        speechReplySpokenText = '';
+        speechAwaitingReply = true;
+      }
+      if (hotMicEnabled) {
         input.value = '';
         renderImagePreviews();
+        setHotMicComposerExpanded(false);
         autoResize();
+        scrollPane('end');
       }
       setTimeout(function() { fetchPane(true); }, 120);
     }
@@ -1806,6 +1968,9 @@
       }
       transcript = transcript.trim();
       input.value = mergeTranscriptWithBaseText(recognitionBaseText, transcript);
+      if (hotMicEnabled) {
+        setHotMicComposerExpanded(true);
+      }
       autoResize();
       if (hotMicEnabled) {
         scheduleHotMicSend();
@@ -1840,6 +2005,11 @@
       if (hotMicEnabled) {
         showStatus('Hot mic listening');
         scheduleRecognitionRestart(250);
+        return;
+      }
+      if (suppressInputFocusOnMicStop) {
+        suppressInputFocusOnMicStop = false;
+        showStatus('Hot mic off');
         return;
       }
       input.focus();
@@ -1922,18 +2092,12 @@
     });
   }
   input.addEventListener('focus', function() {
-    if (window.innerWidth < 700) {
-      document.body.classList.add('input-focus');
-      syncViewportHeight();
-      autoResize();
-    }
+    syncComposerExpandedState();
   });
   input.addEventListener('blur', function() {
     window.setTimeout(function() {
       if (document.activeElement !== input && !isKeyboardOpen()) {
-        document.body.classList.remove('input-focus');
-        syncViewportHeight();
-        autoResize();
+        syncComposerExpandedState();
       }
     }, 120);
   });
