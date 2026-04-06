@@ -650,11 +650,14 @@
     }
 
     body.input-focus .header,
-    body.input-focus .main {
+    body.hot-mic-compose .header,
+    body.input-focus .main,
+    body.hot-mic-compose .main {
       display: none;
     }
 
-    body.input-focus .composer-shell {
+    body.input-focus .composer-shell,
+    body.hot-mic-compose .composer-shell {
       position: fixed;
       inset: 0;
       z-index: 50;
@@ -664,7 +667,8 @@
         var(--bg);
     }
 
-    body.input-focus .composer {
+    body.input-focus .composer,
+    body.hot-mic-compose .composer {
       margin: 0;
       height: 100%;
       max-height: none;
@@ -674,22 +678,26 @@
       padding: 8px;
     }
 
-    body.input-focus .controls-shell {
+    body.input-focus .controls-shell,
+    body.hot-mic-compose .controls-shell {
       display: none;
     }
 
-    body.input-focus .input-row {
+    body.input-focus .input-row,
+    body.hot-mic-compose .input-row {
       flex: 1;
       min-height: 0;
       align-items: stretch;
     }
 
-    body.input-focus .input-stack {
+    body.input-focus .input-stack,
+    body.hot-mic-compose .input-stack {
       flex: 1;
       min-height: 0;
     }
 
-    body.input-focus .composer-input {
+    body.input-focus .composer-input,
+    body.hot-mic-compose .composer-input {
       flex: 1;
       min-height: 0;
       height: 100% !important;
@@ -926,6 +934,7 @@
   var recognitionListening = false;
   var hotMicEnabled = false;
   var hotMicSendTimer = null;
+  var hotMicComposerView = false;
   var speechTimer = null;
   var speechQueue = [];
   var speechPlaybackActive = false;
@@ -935,15 +944,37 @@
   var recognitionPausedForSpeech = false;
   var speechPlaybackToken = 0;
   var speechReplySubmittedText = '';
+  var speechReplyBaseText = '';
   var speechReplyLatestText = '';
   var speechReplySpokenText = '';
   var speechAwaitingReply = false;
+  var suppressInputFocusAfterMicStop = false;
   var HOT_MIC_SILENCE_DELAY = 3000;
   var SPEECH_FOLLOWUP_DELAY = 900;
 
   function isKeyboardOpen() {
     if (!window.visualViewport) return false;
     return (window.innerHeight - window.visualViewport.height) > 120;
+  }
+
+  function syncHotMicComposerView() {
+    document.body.classList.toggle(
+      'hot-mic-compose',
+      hotMicComposerView && window.innerWidth < 700
+    );
+  }
+
+  function isComposerExpanded() {
+    return window.innerWidth < 700 && (
+      hotMicComposerView ||
+      document.body.classList.contains('input-focus')
+    );
+  }
+
+  function setHotMicComposerView(expanded) {
+    hotMicComposerView = !!expanded;
+    syncHotMicComposerView();
+    autoResize();
   }
 
   function syncViewportHeight() {
@@ -953,13 +984,14 @@
       : window.innerHeight;
     document.documentElement.style.setProperty('--app-height', Math.round(height) + 'px');
     document.body.classList.toggle('keyboard-open', keyboardOpen);
+    syncHotMicComposerView();
     if (composerShell) {
       document.documentElement.style.setProperty('--composer-h', composerShell.offsetHeight + 'px');
     }
   }
 
   function autoResize() {
-    if (document.body.classList.contains('input-focus') && window.innerWidth < 700) {
+    if (isComposerExpanded()) {
       input.style.height = '100%';
       syncViewportHeight();
       return;
@@ -1133,24 +1165,8 @@
     return false;
   }
 
-  function extractSpeechReplyInfo(currentText, submittedText) {
-    var normalizedSubmitted = normalizeSpeechText(submittedText);
-    var blocks = splitSpeechBlocks(currentText);
-    var userIndex = -1;
-
-    if (!normalizedSubmitted || !blocks.length) {
-      return { text: '' };
-    }
-
-    for (var i = blocks.length - 1; i >= 0; i -= 1) {
-      if (!isUserSpeechBlock(blocks[i])) continue;
-      if (normalizeSpeechText(blocks[i]).indexOf(normalizedSubmitted) >= 0) {
-        userIndex = i;
-        break;
-      }
-    }
-
-    if (userIndex < 0) {
+  function extractSpeechReplyFromBlocks(blocks, userIndex) {
+    if (userIndex < 0 || !blocks.length) {
       return { text: '' };
     }
 
@@ -1189,6 +1205,102 @@
     };
   }
 
+  function extractLeadingShortSpeechReply(blocks, normalizedSubmitted) {
+    if (!blocks.length) {
+      return { text: '' };
+    }
+
+    for (var i = blocks.length - 1; i >= 0; i -= 1) {
+      var block = blocks[i];
+      if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
+        continue;
+      }
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
+        continue;
+      }
+      if (isProgressSpeechBlock(block)) {
+        continue;
+      }
+
+      var text = normalizeSpeechText(block).replace(/^[\s:;,.!?\-•]+/, '').trim();
+      if (!text) {
+        continue;
+      }
+      if (normalizedSubmitted) {
+        if (text === normalizedSubmitted ||
+            text.indexOf(normalizedSubmitted) >= 0 ||
+            normalizedSubmitted.indexOf(text) >= 0) {
+          continue;
+        }
+      }
+
+      var wordCount = text.split(/\s+/).filter(Boolean).length;
+      if (wordCount <= 16 || text.length <= 120) {
+        return { text: text };
+      }
+    }
+
+    return { text: '' };
+  }
+
+  function findMatchingUserBlockIndex(blocks, normalizedSubmitted, fromEnd) {
+    if (!blocks.length) return -1;
+
+    if (fromEnd) {
+      for (var i = blocks.length - 1; i >= 0; i -= 1) {
+        if (!isUserSpeechBlock(blocks[i])) continue;
+        if (!normalizedSubmitted || normalizeSpeechText(blocks[i]).indexOf(normalizedSubmitted) >= 0) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    for (var j = 0; j < blocks.length; j += 1) {
+      if (!isUserSpeechBlock(blocks[j])) continue;
+      if (!normalizedSubmitted || normalizeSpeechText(blocks[j]).indexOf(normalizedSubmitted) >= 0) {
+        return j;
+      }
+    }
+    return -1;
+  }
+
+  function extractSpeechReplyInfo(currentText, submittedText, baseText) {
+    var normalizedSubmitted = normalizeSpeechText(submittedText);
+    var deltaText = paneTextDelta(baseText || '', currentText || '');
+    var deltaBlocks = splitSpeechBlocks(deltaText);
+
+    if (deltaBlocks.length) {
+      var deltaUserIndex = findMatchingUserBlockIndex(deltaBlocks, normalizedSubmitted, false);
+      if (deltaUserIndex < 0) {
+        var shortReply = extractLeadingShortSpeechReply(deltaBlocks, normalizedSubmitted);
+        if (shortReply.text) {
+          return shortReply;
+        }
+        deltaUserIndex = findMatchingUserBlockIndex(deltaBlocks, '', false);
+      }
+      var deltaReply = extractSpeechReplyFromBlocks(deltaBlocks, deltaUserIndex);
+      if (deltaReply.text) {
+        return deltaReply;
+      }
+    }
+
+    var blocks = splitSpeechBlocks(currentText);
+    var userIndex = -1;
+
+    if (!normalizedSubmitted || !blocks.length) {
+      return { text: '' };
+    }
+
+    userIndex = findMatchingUserBlockIndex(blocks, normalizedSubmitted, true);
+
+    if (userIndex < 0) {
+      return { text: '' };
+    }
+
+    return extractSpeechReplyFromBlocks(blocks, userIndex);
+  }
+
   function extractSpeechDelta(spokenText, replyText) {
     var spoken = normalizeSpeechText(spokenText);
     var reply = normalizeSpeechText(replyText);
@@ -1205,6 +1317,7 @@
     clearTimeout(speechTimer);
     speechTimer = null;
     speechReplySubmittedText = '';
+    speechReplyBaseText = '';
     speechReplyLatestText = '';
     speechReplySpokenText = '';
     speechAwaitingReply = false;
@@ -1398,7 +1511,8 @@
 
     var replyInfo = extractSpeechReplyInfo(
       speechReplyLatestText,
-      speechReplySubmittedText
+      speechReplySubmittedText,
+      speechReplyBaseText
     );
     var deltaText = extractSpeechDelta(speechReplySpokenText, replyInfo.text);
     if (!deltaText) {
@@ -1460,12 +1574,16 @@
   function setHotMicEnabled(enabled) {
     if (enabled && (!SpeechRecognitionCtor || !recognition)) {
       hotMicEnabled = false;
+      suppressInputFocusAfterMicStop = false;
+      hotMicComposerView = false;
+      syncHotMicComposerView();
       refreshMicButtonState();
       showStatus('Speech recognition unavailable here');
       return;
     }
 
     hotMicEnabled = enabled;
+    suppressInputFocusAfterMicStop = false;
     clearTimeout(hotMicSendTimer);
     hotMicSendTimer = null;
     clearTimeout(recognitionRestartTimer);
@@ -1475,17 +1593,24 @@
       resetSpeechReplyTracking();
       recognitionPausedForSpeech = false;
       primeSpeechSynthesis();
+      setHotMicComposerView(true);
       if (document.activeElement === input) {
         input.blur();
-        document.body.classList.remove('input-focus');
-        syncViewportHeight();
       }
+      document.body.classList.remove('input-focus');
+      syncViewportHeight();
       showStatus('Hot mic on');
       startRecognition();
     } else {
+      suppressInputFocusAfterMicStop = true;
       stopSpeechPlayback();
       resetSpeechReplyTracking();
       recognitionPausedForSpeech = false;
+      document.body.classList.remove('input-focus');
+      setHotMicComposerView(false);
+      if (document.activeElement === input) {
+        input.blur();
+      }
       stopRecognition();
       showStatus('Hot mic off');
     }
@@ -1921,7 +2046,12 @@
         stopSpeechPlayback();
         clearTimeout(speechTimer);
         speechTimer = null;
+        recognitionPausedForSpeech = true;
+        if (recognitionListening) {
+          stopRecognition();
+        }
         speechReplySubmittedText = composedText;
+        speechReplyBaseText = lastText || '';
         speechReplyLatestText = lastText || '';
         speechReplySpokenText = '';
         speechAwaitingReply = true;
@@ -1929,7 +2059,10 @@
       if (hotMicEnabled) {
         input.value = '';
         renderImagePreviews();
+        document.body.classList.remove('input-focus');
+        setHotMicComposerView(false);
         autoResize();
+        scrollPane('end');
       }
       setTimeout(function() { fetchPane(true); }, 120);
     }
@@ -1976,12 +2109,18 @@
     };
 
     recognition.onresult = function(event) {
+      if (speechAwaitingReply) {
+        return;
+      }
       var transcript = '';
       for (var i = event.resultIndex; i < event.results.length; i += 1) {
         transcript += event.results[i][0].transcript;
       }
       transcript = transcript.trim();
       input.value = mergeTranscriptWithBaseText(recognitionBaseText, transcript);
+      if (hotMicEnabled) {
+        setHotMicComposerView(true);
+      }
       autoResize();
       if (hotMicEnabled) {
         scheduleHotMicSend();
@@ -1991,7 +2130,16 @@
     recognition.onerror = function(event) {
       setMicState(false);
       var errorCode = event && event.error ? event.error : '';
+      if (suppressInputFocusAfterMicStop) {
+        suppressInputFocusAfterMicStop = false;
+        showStatus('Hot mic off');
+        return;
+      }
       if (hotMicEnabled) {
+        if (speechAwaitingReply) {
+          showStatus('Waiting for reply');
+          return;
+        }
         if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
           setHotMicEnabled(false);
           showStatus('Hot mic unavailable');
@@ -2009,8 +2157,17 @@
 
     recognition.onend = function() {
       setMicState(false);
+      if (speechAwaitingReply) {
+        showStatus('Waiting for reply');
+        return;
+      }
       if (recognitionPausedForSpeech) {
         resumeRecognitionAfterSpeech();
+        return;
+      }
+      if (suppressInputFocusAfterMicStop) {
+        suppressInputFocusAfterMicStop = false;
+        showStatus('Hot mic off');
         return;
       }
       if (hotMicEnabled) {
