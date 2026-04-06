@@ -619,94 +619,91 @@
     margin: 0;
   }
 
-  @media (max-width: 699px) {
-    .main {
-      padding: 8px 8px 0;
-      gap: 6px;
-    }
+  .main {
+    padding: 8px 8px 0;
+    gap: 6px;
+  }
 
-    .viewport {
-      border-radius: 18px;
-    }
+  .viewport {
+    border-radius: 18px;
+  }
 
-    .pane-wrap {
-      padding: 10px;
-    }
+  .pane-wrap {
+    padding: 10px;
+  }
 
-    .composer-shell {
-      padding: 0;
-    }
+  .composer-shell {
+    padding: 0;
+  }
 
-    .composer {
-      margin: 5px 2px 0;
-      padding: 4px;
-      gap: 3px;
-      border-radius: 16px;
-    }
+  .composer {
+    margin: 5px 2px 0;
+    padding: 4px;
+    gap: 3px;
+    border-radius: 16px;
+  }
 
-    .input-row {
-      grid-template-columns: minmax(0, 1fr) 45px 45px;
-      gap: 2px;
-    }
+  .input-row {
+    grid-template-columns: minmax(0, 1fr) 45px 45px;
+    gap: 2px;
+  }
 
-    body.input-focus .header,
-    body.hot-mic-compose .header,
-    body.input-focus .main,
-    body.hot-mic-compose .main {
-      display: none;
-    }
+  body.input-focus .header,
+  body.hot-mic-compose .header,
+  body.input-focus .main,
+  body.hot-mic-compose .main {
+    display: none;
+  }
 
-    body.input-focus .composer-shell,
-    body.hot-mic-compose .composer-shell {
-      position: fixed;
-      inset: 0;
-      z-index: 50;
-      padding: calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px);
-      background:
-        linear-gradient(180deg, rgba(10, 10, 15, 0.98), rgba(10, 10, 15, 0.98)),
-        var(--bg);
-    }
+  body.input-focus .composer-shell,
+  body.hot-mic-compose .composer-shell {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    padding: calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px);
+    background:
+      linear-gradient(180deg, rgba(10, 10, 15, 0.98), rgba(10, 10, 15, 0.98)),
+      var(--bg);
+  }
 
-    body.input-focus .composer,
-    body.hot-mic-compose .composer {
-      margin: 0;
-      height: 100%;
-      max-height: none;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      padding: 8px;
-    }
+  body.input-focus .composer,
+  body.hot-mic-compose .composer {
+    margin: 0;
+    height: 100%;
+    max-height: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px;
+  }
 
-    body.input-focus .controls-shell,
-    body.hot-mic-compose .controls-shell {
-      display: none;
-    }
+  body.input-focus .controls-shell,
+  body.hot-mic-compose .controls-shell {
+    display: none;
+  }
 
-    body.input-focus .input-row,
-    body.hot-mic-compose .input-row {
-      flex: 1;
-      min-height: 0;
-      align-items: stretch;
-    }
+  body.input-focus .input-row,
+  body.hot-mic-compose .input-row {
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
+  }
 
-    body.input-focus .input-stack,
-    body.hot-mic-compose .input-stack {
-      flex: 1;
-      min-height: 0;
-    }
+  body.input-focus .input-stack,
+  body.hot-mic-compose .input-stack {
+    flex: 1;
+    min-height: 0;
+  }
 
-    body.input-focus .composer-input,
-    body.hot-mic-compose .composer-input {
-      flex: 1;
-      min-height: 0;
-      height: 100% !important;
-      max-height: none;
-      font-size: 16px;
-      line-height: 1.45;
-      padding: 14px 13px;
-    }
-
+  body.input-focus .composer-input,
+  body.hot-mic-compose .composer-input {
+    flex: 1;
+    min-height: 0;
+    height: 100% !important;
+    max-height: none;
+    font-size: 16px;
+    line-height: 1.45;
+    padding: 14px 13px;
   }
 
   body.keyboard-open .header {
@@ -909,12 +906,12 @@
   function syncHotMicComposerView() {
     document.body.classList.toggle(
       'hot-mic-compose',
-      hotMicComposerView && window.innerWidth < 700
+      hotMicComposerView
     );
   }
 
   function isComposerExpanded() {
-    return window.innerWidth < 700 && (
+    return (
       hotMicComposerView ||
       document.body.classList.contains('input-focus')
     );
@@ -949,7 +946,7 @@
     input.style.height = '0px';
     var targetHeight = !input.value.trim()
       ? minHeight
-      : Math.min(input.scrollHeight, window.innerWidth >= 700 ? 132 : 84);
+      : Math.min(input.scrollHeight, 84);
     input.style.height = targetHeight + 'px';
     syncViewportHeight();
   }
@@ -2395,11 +2392,9 @@
     });
   }
   input.addEventListener('focus', function() {
-    if (window.innerWidth < 700) {
-      document.body.classList.add('input-focus');
-      syncViewportHeight();
-      autoResize();
-    }
+    document.body.classList.add('input-focus');
+    syncViewportHeight();
+    autoResize();
   });
   input.addEventListener('blur', function() {
     window.setTimeout(function() {
