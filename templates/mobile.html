@@ -741,72 +741,6 @@
     display: contents;
   }
 
-  @media (min-width: 700px) {
-    :root {
-      --composer-h: 154px;
-    }
-
-    .main {
-      padding: 18px 18px 0;
-      gap: 14px;
-    }
-
-    .viewport {
-      border-radius: 26px;
-    }
-
-    .pane-wrap {
-      padding: 20px;
-    }
-
-    .pane {
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    .composer-shell {
-      padding: 12px 18px calc(env(safe-area-inset-bottom) + 14px);
-    }
-
-    .composer {
-      grid-template-columns: minmax(0, 1fr) auto;
-      grid-template-areas:
-        "tools tools"
-        "nav nav"
-        "input input";
-      align-items: stretch;
-      padding: 12px;
-    }
-
-    .tool-row,
-    .nav-row {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 8px;
-      overflow: visible;
-    }
-
-    .tool-row { grid-area: tools; }
-    .nav-row { grid-area: nav; }
-    .input-row { grid-area: input; }
-
-    .tool-row .chip-btn,
-    .nav-row .chip-btn {
-      width: 100%;
-      min-width: 0;
-      padding: 0 8px;
-    }
-
-    .composer-input {
-      min-height: 64px;
-      max-height: 132px;
-      font-size: 17px;
-    }
-
-    .send-btn {
-      min-width: 90px;
-    }
-  }
 </style>
 </head>
 <body>
@@ -949,8 +883,23 @@
   var speechReplySpokenText = '';
   var speechAwaitingReply = false;
   var suppressInputFocusAfterMicStop = false;
+  var bargeInStartTimer = null;
+  var bargeInMonitorTimer = null;
+  var bargeInStream = null;
+  var bargeInAudioContext = null;
+  var bargeInSource = null;
+  var bargeInAnalyser = null;
+  var bargeInTimeData = null;
+  var bargeInNoiseFloor = 0.008;
+  var bargeInVoiceFrames = 0;
+  var lastMicActivationAt = 0;
   var HOT_MIC_SILENCE_DELAY = 3000;
   var SPEECH_FOLLOWUP_DELAY = 900;
+  var BARGE_IN_MONITOR_DELAY = 180;
+  var BARGE_IN_MONITOR_INTERVAL = 120;
+  var BARGE_IN_MIN_LEVEL = 0.018;
+  var BARGE_IN_TTS_MIN_LEVEL = 0.032;
+  var BARGE_IN_TRIGGER_FRAMES = 3;
 
   function isKeyboardOpen() {
     if (!window.visualViewport) return false;
@@ -1323,6 +1272,188 @@
     speechAwaitingReply = false;
   }
 
+  function shouldMonitorBargeIn() {
+    return hotMicEnabled && (
+      speechAwaitingReply ||
+      speechPlaybackActive ||
+      speechQueue.length
+    );
+  }
+
+  function stopBargeInMonitor() {
+    clearTimeout(bargeInStartTimer);
+    bargeInStartTimer = null;
+    clearInterval(bargeInMonitorTimer);
+    bargeInMonitorTimer = null;
+    bargeInVoiceFrames = 0;
+    bargeInNoiseFloor = 0.008;
+    bargeInTimeData = null;
+    if (bargeInSource) {
+      try {
+        bargeInSource.disconnect();
+      } catch (err) {}
+      bargeInSource = null;
+    }
+    if (bargeInStream) {
+      bargeInStream.getTracks().forEach(function(track) {
+        try {
+          track.stop();
+        } catch (err) {}
+      });
+      bargeInStream = null;
+    }
+    if (bargeInAudioContext) {
+      try {
+        bargeInAudioContext.close();
+      } catch (err) {}
+      bargeInAudioContext = null;
+    }
+    bargeInAnalyser = null;
+  }
+
+  function sampleBargeInLevel() {
+    if (!bargeInAnalyser || !bargeInTimeData) {
+      return 0;
+    }
+    bargeInAnalyser.getByteTimeDomainData(bargeInTimeData);
+    var sumSquares = 0;
+    for (var i = 0; i < bargeInTimeData.length; i += 1) {
+      var normalized = (bargeInTimeData[i] - 128) / 128;
+      sumSquares += normalized * normalized;
+    }
+    return Math.sqrt(sumSquares / bargeInTimeData.length);
+  }
+
+  function shouldInterruptTmuxForBargeIn() {
+    return hotMicEnabled && speechAwaitingReply;
+  }
+
+  function triggerBargeIn() {
+    if (!hotMicEnabled) return;
+
+    var shouldInterruptTmux = shouldInterruptTmuxForBargeIn();
+    stopBargeInMonitor();
+    stopSpeechPlayback();
+    resetSpeechReplyTracking();
+    recognitionPausedForSpeech = false;
+    clearTimeout(recognitionRestartTimer);
+    recognitionRestartTimer = null;
+    pendingSubmittedText = '';
+    pendingInputSnapshot = '';
+    input.value = '';
+    renderImagePreviews();
+    document.body.classList.remove('input-focus');
+    setHotMicComposerView(true);
+    autoResize();
+
+    if (shouldInterruptTmux) {
+      postJson('/api/send-keys/' + encodeURIComponent(SESSION), { key: 'Escape' })
+        .then(function() {
+          setTimeout(function() { fetchPane(true); }, 120);
+          scheduleRecognitionRestart(260);
+        })
+        .catch(function() {});
+    } else {
+      scheduleRecognitionRestart(220);
+    }
+
+    showStatus('Hot mic listening');
+  }
+
+  function pollBargeInMonitor() {
+    if (!shouldMonitorBargeIn()) {
+      stopBargeInMonitor();
+      return;
+    }
+
+    var level = sampleBargeInLevel();
+    if (!level) {
+      bargeInVoiceFrames = 0;
+      return;
+    }
+
+    var floorWeight = speechPlaybackActive ? 0.04 : 0.08;
+    bargeInNoiseFloor = (bargeInNoiseFloor * (1 - floorWeight)) +
+      (Math.min(level, 0.08) * floorWeight);
+
+    var threshold = Math.max(
+      speechPlaybackActive ? BARGE_IN_TTS_MIN_LEVEL : BARGE_IN_MIN_LEVEL,
+      (speechPlaybackActive ? bargeInNoiseFloor * 2.9 : bargeInNoiseFloor * 2.3) +
+        (speechPlaybackActive ? 0.012 : 0.008)
+    );
+
+    if (level > threshold) {
+      bargeInVoiceFrames += 1;
+      if (bargeInVoiceFrames >= BARGE_IN_TRIGGER_FRAMES) {
+        bargeInVoiceFrames = 0;
+        triggerBargeIn();
+      }
+      return;
+    }
+
+    bargeInVoiceFrames = 0;
+  }
+
+  async function startBargeInMonitor() {
+    if (bargeInMonitorTimer || !shouldMonitorBargeIn() || recognitionListening) {
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return;
+    }
+
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      if (!shouldMonitorBargeIn() || recognitionListening) {
+        stream.getTracks().forEach(function(track) { track.stop(); });
+        return;
+      }
+
+      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) {
+        stream.getTracks().forEach(function(track) { track.stop(); });
+        return;
+      }
+
+      var context = new AudioContextCtor();
+      var analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.18;
+      var source = context.createMediaStreamSource(stream);
+      source.connect(analyser);
+      try {
+        await context.resume();
+      } catch (err) {}
+
+      bargeInStream = stream;
+      bargeInAudioContext = context;
+      bargeInSource = source;
+      bargeInAnalyser = analyser;
+      bargeInTimeData = new Uint8Array(analyser.fftSize);
+      bargeInNoiseFloor = 0.008;
+      bargeInVoiceFrames = 0;
+      bargeInMonitorTimer = setInterval(pollBargeInMonitor, BARGE_IN_MONITOR_INTERVAL);
+    } catch (err) {}
+  }
+
+  function scheduleBargeInMonitorStart(delay) {
+    clearTimeout(bargeInStartTimer);
+    bargeInStartTimer = null;
+    if (!shouldMonitorBargeIn()) {
+      return;
+    }
+    bargeInStartTimer = setTimeout(function() {
+      startBargeInMonitor();
+    }, typeof delay === 'number' ? delay : BARGE_IN_MONITOR_DELAY);
+  }
+
   function refreshMicButtonState() {
     if (!hotMicBtn) return;
     hotMicBtn.classList.toggle('hot-mic', hotMicEnabled);
@@ -1358,6 +1489,7 @@
 
   function startRecognition() {
     if (!recognition || recognitionListening) return;
+    stopBargeInMonitor();
     clearTimeout(recognitionRestartTimer);
     recognitionRestartTimer = null;
     try {
@@ -1377,6 +1509,7 @@
     recognitionPausedForSpeech = true;
     clearTimeout(recognitionRestartTimer);
     recognitionRestartTimer = null;
+    scheduleBargeInMonitorStart();
     if (recognitionListening) {
       stopRecognition();
     }
@@ -1384,6 +1517,7 @@
 
   function resumeRecognitionAfterSpeech() {
     if (!hotMicEnabled) return;
+    stopBargeInMonitor();
     speechPlaybackActive = false;
     recognitionPausedForSpeech = false;
     scheduleRecognitionRestart(220);
@@ -1576,6 +1710,7 @@
       hotMicEnabled = false;
       suppressInputFocusAfterMicStop = false;
       hotMicComposerView = false;
+      stopBargeInMonitor();
       syncHotMicComposerView();
       refreshMicButtonState();
       showStatus('Speech recognition unavailable here');
@@ -1584,6 +1719,7 @@
 
     hotMicEnabled = enabled;
     suppressInputFocusAfterMicStop = false;
+    stopBargeInMonitor();
     clearTimeout(hotMicSendTimer);
     hotMicSendTimer = null;
     clearTimeout(recognitionRestartTimer);
@@ -1608,6 +1744,7 @@
       recognitionPausedForSpeech = false;
       document.body.classList.remove('input-focus');
       setHotMicComposerView(false);
+      scrollPane('end');
       if (document.activeElement === input) {
         input.blur();
       }
@@ -1626,6 +1763,11 @@
     if (event && event.cancelable) {
       event.preventDefault();
     }
+    var now = Date.now();
+    if (now - lastMicActivationAt < 320) {
+      return;
+    }
+    lastMicActivationAt = now;
     handleMicButtonTap();
   }
 
@@ -2055,6 +2197,7 @@
         speechReplyLatestText = lastText || '';
         speechReplySpokenText = '';
         speechAwaitingReply = true;
+        scheduleBargeInMonitorStart();
       }
       if (hotMicEnabled) {
         input.value = '';
@@ -2103,6 +2246,7 @@
     recognition.lang = navigator.language || 'en-US';
 
     recognition.onstart = function() {
+      suppressInputFocusAfterMicStop = false;
       recognitionBaseText = input.value;
       setMicState(true);
       showStatus(hotMicEnabled ? 'Hot mic listening' : 'Listening…');
@@ -2131,12 +2275,12 @@
       setMicState(false);
       var errorCode = event && event.error ? event.error : '';
       if (suppressInputFocusAfterMicStop) {
-        suppressInputFocusAfterMicStop = false;
         showStatus('Hot mic off');
         return;
       }
       if (hotMicEnabled) {
         if (speechAwaitingReply) {
+          scheduleBargeInMonitorStart();
           showStatus('Waiting for reply');
           return;
         }
@@ -2158,6 +2302,7 @@
     recognition.onend = function() {
       setMicState(false);
       if (speechAwaitingReply) {
+        scheduleBargeInMonitorStart();
         showStatus('Waiting for reply');
         return;
       }
@@ -2166,7 +2311,6 @@
         return;
       }
       if (suppressInputFocusAfterMicStop) {
-        suppressInputFocusAfterMicStop = false;
         showStatus('Hot mic off');
         return;
       }
@@ -2245,12 +2389,8 @@
 
   sendBtn.addEventListener('click', function() { sendText(true); });
   if (hotMicBtn) {
-    hotMicBtn.addEventListener('touchend', activateMic, { passive: false });
+    hotMicBtn.addEventListener('pointerup', activateMic);
     hotMicBtn.addEventListener('click', function(event) {
-      if (event.detail !== 0) {
-        event.preventDefault();
-        return;
-      }
       activateMic(event);
     });
   }
