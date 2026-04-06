@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0a0a0f">
-<title>{{SESSION_NAME}} — Codex Remote Hub</title>
+<title>{{SESSION_NAME}} — {{SESSION_PRODUCT}} Remote Hub</title>
 <style>
   :root {
     --bg: #0a0a0f;
@@ -347,7 +347,13 @@
 
 <script>
   var SESSION = "{{SESSION_NAME}}";
+  var AGENT = "{{SESSION_AGENT}}";
   var TERMINAL_URL = "{{TERMINAL_URL}}";
+  var AGENT_QUERY = '?agent=' + encodeURIComponent(AGENT);
+
+  function sessionApi(basePath) {
+    return basePath + encodeURIComponent(SESSION) + AGENT_QUERY;
+  }
 
   var iframe = document.getElementById('terminal');
   var loading = document.getElementById('loading');
@@ -369,7 +375,7 @@
 
   async function connectTerminal() {
     if (prefersMobileShell) {
-      window.location.replace('/mobile/' + encodeURIComponent(SESSION));
+      window.location.replace('/mobile/' + encodeURIComponent(SESSION) + AGENT_QUERY);
       return;
     }
 
@@ -378,7 +384,7 @@
     var attempts = 0;
     while (true) {
       try {
-        var r = await fetch('/api/ttyd-ready/' + encodeURIComponent(SESSION));
+        var r = await fetch(sessionApi('/api/ttyd-ready/'));
         var data = await r.json();
         if (data.ready) break;
       } catch(e) {}
@@ -398,7 +404,7 @@
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState !== 'visible' || !iframe.src) return;
     // Check if ttyd is still reachable before forcing a reload
-    fetch('/api/ttyd-ready/' + encodeURIComponent(SESSION))
+    fetch(sessionApi('/api/ttyd-ready/'))
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (!data.ready) {
@@ -431,7 +437,7 @@
 
   async function sk(key) {
     try {
-      var res = await fetch('/api/send-keys/' + encodeURIComponent(SESSION), {
+      var res = await fetch(sessionApi('/api/send-keys/'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: key })
@@ -444,7 +450,7 @@
 
   async function sendText(text) {
     try {
-      var res = await fetch('/api/send-text/' + encodeURIComponent(SESSION), {
+      var res = await fetch(sessionApi('/api/send-text/'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text })
@@ -459,7 +465,7 @@
     try {
       var text = await navigator.clipboard.readText();
       if (!text) { showToast('Clipboard empty'); return; }
-      var res = await fetch('/api/send-text/' + encodeURIComponent(SESSION), {
+      var res = await fetch(sessionApi('/api/send-text/'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text })
@@ -476,7 +482,7 @@
 
   async function scrollTmux(dir) {
     try {
-      await fetch('/api/scroll/' + encodeURIComponent(SESSION), {
+      await fetch(sessionApi('/api/scroll/'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ direction: dir })

@@ -93,7 +93,7 @@ do_uninstall() {
     fi
 
     # Kill ttyd processes
-    pkill -f "ttyd.*-p 77" 2>/dev/null || true
+    pkill -f "ttyd.*-p 7[89][0-9][0-9]" 2>/dev/null || true
 
     # Remove files
     rm -rf "$INSTALL_DIR"
@@ -500,7 +500,7 @@ case "${1:-status}" in
                 fi
                 ;;
         esac
-        pkill -f "ttyd.*-p 77" 2>/dev/null
+        pkill -f "ttyd.*-p 7[89][0-9][0-9]" 2>/dev/null
         echo "  Codex Remote Hub stopped"
         ;;
     restart)
@@ -537,7 +537,7 @@ case "${1:-status}" in
         if $running; then
             echo "  Codex Remote Hub is running"
             echo ""
-            tmux list-sessions -F "   #{session_name}" 2>/dev/null | grep codex || echo "   No active sessions"
+            tmux list-sessions -F "   #{session_name}" 2>/dev/null | grep -E "codex|claude" || echo "   No active sessions"
         else
             echo "  Codex Remote Hub is stopped"
         fi

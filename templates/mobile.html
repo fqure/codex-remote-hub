@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F7F3EE">
-<title>{{SESSION_NAME}} — Codex Remote Hub Mobile</title>
+<title>{{SESSION_NAME}} — {{SESSION_PRODUCT}} Remote Hub Mobile</title>
 <style>
   /* ── Design tokens ── */
   :root {
@@ -729,7 +729,7 @@
           <div class="input-stack">
             <div id="image-preview-strip" class="image-preview-strip" aria-live="polite"></div>
             <div class="input-pill-wrap">
-              <textarea id="composer-input" class="composer-input" rows="1" aria-label="Send text to Codex" placeholder="Message..."></textarea>
+              <textarea id="composer-input" class="composer-input" rows="1" aria-label="Send text to {{SESSION_PRODUCT}}" placeholder="Message..."></textarea>
               <!-- Variant B: mic inside pill (hidden) -->
               <div class="input-pill-mic">
                 <button class="hot-mic-btn variant-b-mic" type="button" aria-label="Hot mic" style="width:36px;height:36px;min-width:36px;">
@@ -771,6 +771,18 @@
 
 <script>
   var SESSION = "{{SESSION_NAME}}";
+  var SESSION_PRODUCT = "{{SESSION_PRODUCT}}";
+  var AGENT = "{{SESSION_AGENT}}";
+  var AGENT_QUERY = '?agent=' + encodeURIComponent(AGENT);
+
+  function sessionApi(basePath) {
+    return basePath + encodeURIComponent(SESSION) + AGENT_QUERY;
+  }
+
+  function queryWithAgent(basePath) {
+    return basePath + AGENT_QUERY;
+  }
+
   var paneWrap = document.getElementById('pane-wrap');
   var pane = document.getElementById('pane');
   var cwdLabel = document.getElementById('cwd-label');
@@ -1282,7 +1294,7 @@
     autoResize();
 
     if (shouldInterruptTmux) {
-      postJson('/api/send-keys/' + encodeURIComponent(SESSION), { key: 'Escape' })
+      postJson(sessionApi('/api/send-keys/'), { key: 'Escape' })
         .then(function() {
           setTimeout(function() { fetchPane(true); }, 120);
           scheduleRecognitionRestart(260);
@@ -1867,7 +1879,7 @@
     });
 
     try {
-      var res = await fetch('/api/upload-image/' + encodeURIComponent(SESSION), {
+      var res = await fetch(sessionApi('/api/upload-image/'), {
         method: 'POST',
         body: form
       });
@@ -1892,7 +1904,7 @@
 
     showStatus('Preparing ' + (labels[mode] || 'screenshot'));
     try {
-      var res = await fetch('/api/screenshot/' + encodeURIComponent(SESSION), {
+      var res = await fetch(sessionApi('/api/screenshot/'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: mode })
@@ -1954,7 +1966,7 @@
     setWindowSheetOpen(true);
     renderWindowChoices(cachedWindows);
     try {
-      var res = await fetch('/api/windows', { cache: 'no-store' });
+      var res = await fetch(queryWithAgent('/api/windows'), { cache: 'no-store' });
       var data = await res.json();
       cachedWindows = (data && data.windows) || [];
       renderWindowChoices(cachedWindows);
@@ -1968,7 +1980,7 @@
     if (!windowId) return;
     showStatus('Preparing window screenshot');
     try {
-      var res = await fetch('/api/screenshot/' + encodeURIComponent(SESSION), {
+      var res = await fetch(sessionApi('/api/screenshot/'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: 'window', window_id: windowId })
@@ -2013,7 +2025,7 @@
 
   async function fetchPane(forceStick) {
     try {
-      var res = await fetch('/api/pane/' + encodeURIComponent(SESSION) + '?lines=120', {
+      var res = await fetch(sessionApi('/api/pane/') + '&lines=120', {
         cache: 'no-store'
       });
       var data = await res.json();
@@ -2060,9 +2072,9 @@
     for (var i = 0; i < steps.length; i += 1) {
       var step = steps[i];
       if (step.key) {
-        ok = await postJson('/api/send-keys/' + encodeURIComponent(SESSION), { key: step.key });
+        ok = await postJson(sessionApi('/api/send-keys/'), { key: step.key });
       } else if (typeof step.text === 'string') {
-        ok = await postJson('/api/send-text/' + encodeURIComponent(SESSION), { text: step.text });
+        ok = await postJson(sessionApi('/api/send-text/'), { text: step.text });
       }
 
       if (!ok) break;
@@ -2109,12 +2121,12 @@
     hotMicSendTimer = null;
 
     var composedText = text;
-    var ok = await postJson('/api/send-text/' + encodeURIComponent(SESSION), { text: composedText });
+    var ok = await postJson(sessionApi('/api/send-text/'), { text: composedText });
     if (ok && withEnter) {
-      ok = await postJson('/api/send-keys/' + encodeURIComponent(SESSION), { key: 'Enter' });
+      ok = await postJson(sessionApi('/api/send-keys/'), { key: 'Enter' });
     }
 
-    showStatus(ok ? 'Sent to Codex' : 'Send failed');
+    showStatus(ok ? 'Sent to ' + SESSION_PRODUCT : 'Send failed');
     if (ok) {
       primeSpeechSynthesis();
       pendingSubmittedText = composedText;
@@ -2453,4 +2465,3 @@
 </script>
 </body>
 </html>
-

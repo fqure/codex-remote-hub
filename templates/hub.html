@@ -6,9 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Codex Remote Hub">
+<meta name="apple-mobile-web-app-title" content="Remote Hub">
 <meta name="theme-color" content="#F5F1EB">
-<title>Codex Remote Hub</title>
+<title>Remote Hub</title>
 <link rel="apple-touch-icon" href="/icon.png">
 <style>
   :root {
@@ -288,6 +288,42 @@
   .form-row {
     display: flex;
     gap: 10px;
+  }
+
+  .agent-toggle {
+    display: flex;
+    margin-bottom: 12px;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 2px rgba(45, 41, 38, 0.04);
+  }
+
+  .agent-chip {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    border-radius: 999px;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .agent-chip.active {
+    background: linear-gradient(135deg, var(--accent), #F59E0B);
+    color: #fff;
+    box-shadow: 0 1px 3px rgba(217, 119, 6, 0.28);
+    font-weight: 700;
+  }
+
+  .agent-chip:not(.active):active {
+    background: var(--surface-hover);
+    color: var(--accent);
   }
 
   .form-input {
@@ -703,6 +739,100 @@
     border: 1px solid rgba(217, 119, 6, 0.2);
   }
 
+  .saved-project {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 3px rgba(45, 41, 38, 0.05);
+    overflow: hidden;
+  }
+
+  .saved-project + .saved-project {
+    margin-top: 10px;
+  }
+
+  .saved-summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .saved-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .saved-summary-left {
+    min-width: 0;
+  }
+
+  .saved-summary-meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .saved-summary-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .saved-thread-list {
+    border-top: 1px solid var(--border);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .saved-thread {
+    width: 100%;
+    border: 1px solid transparent;
+    background: var(--surface-hover);
+    border-radius: 12px;
+    padding: 12px 14px;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.15s ease;
+  }
+
+  .saved-thread:active {
+    transform: scale(0.98);
+    border-color: rgba(217, 119, 6, 0.2);
+  }
+
+  .saved-thread-title {
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .saved-thread-meta {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .saved-empty {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
   /* ── Desktop responsive ── */
   @media (min-width: 768px) {
     body { padding-left: 24px; padding-right: 24px; }
@@ -722,7 +852,7 @@
   </div>
   <div class="header">
     <span class="logo">
-      <span class="logo-prompt">&gt;_ </span><span class="logo-text">codex remote hub</span><span class="logo-cursor"></span>
+      <span class="logo-prompt">&gt;_ </span><span class="logo-text">remote hub</span><span class="logo-cursor"></span>
     </span>
     <span class="counter">{{COUNT_TEXT}}</span>
     <hr class="header-rule">
@@ -734,7 +864,10 @@
     var text = el.textContent.trim();
     var m = text.match(/^(\d+)\s+(.*)$/);
     if (m) {
-      el.innerHTML = '<span class="subtitle-count">' + m[1] + '</span> ' + m[2].replace('session','Codex CLI Session');
+      var label = m[2].replace(/sessions?/i, function(match) {
+        return match.toLowerCase() === 'session' ? 'active session' : 'active sessions';
+      });
+      el.innerHTML = '<span class="subtitle-count">' + m[1] + '</span> ' + label;
     }
   })();
   </script>
@@ -749,8 +882,17 @@
     <div class="sessions-list" id="capturable-list"></div>
   </div>
 
+  <div class="capture-section" id="saved-section" style="display:none;">
+    <label class="form-label">Saved Threads</label>
+    <div id="saved-projects"></div>
+  </div>
+
   <div class="form-section">
     <label class="form-label">New Session</label>
+    <div class="agent-toggle" id="agent-toggle">
+      <button type="button" class="agent-chip active" data-agent="codex" onclick="setSelectedAgent('codex')">Codex</button>
+      <button type="button" class="agent-chip" data-agent="claude" onclick="setSelectedAgent('claude')">Claude</button>
+    </div>
     <div class="form-row">
       <input class="form-input" id="session-name" placeholder="session name" autocapitalize="none" autocorrect="off" spellcheck="false">
       <button class="form-btn" onclick="openFolderPicker()">Create</button>
@@ -758,7 +900,7 @@
   </div>
 
   <div class="footer">
-    Codex Remote Hub v{{VERSION}}
+    Remote Hub v{{VERSION}}
     <span class="footer-badge">ttyd + tmux</span>
   </div>
 
@@ -793,8 +935,8 @@
       </div>
       <div style="padding:16px 20px;">
         <div style="background:var(--danger-bg);border:1px solid rgba(229,69,69,0.2);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;">
-          <div style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--danger);margin-bottom:6px;">--dangerously-bypass-approvals-and-sandbox</div>
-          <div style="font-size:13px;color:var(--text-dim);line-height:1.5;">
+          <div id="skip-flag" style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--danger);margin-bottom:6px;">--dangerously-bypass-approvals-and-sandbox</div>
+          <div id="skip-copy" style="font-size:13px;color:var(--text-dim);line-height:1.5;">
             Codex will be able to execute commands, edit, and delete files <strong style="color:var(--danger);">without asking for confirmation</strong>. Only use this for projects you fully trust.
           </div>
         </div>
@@ -812,6 +954,46 @@
   let currentPath = '';
   let currentAbsolute = '';
   let sessionName = '';
+  let selectedAgent = 'codex';
+  let captureTarget = null;
+  let resumeTarget = null;
+
+  function setSelectedAgent(agent) {
+    selectedAgent = agent === 'claude' ? 'claude' : 'codex';
+    document.querySelectorAll('.agent-chip').forEach(function(el) {
+      el.classList.toggle('active', el.getAttribute('data-agent') === selectedAgent);
+    });
+  }
+
+  function updateSkipModal(agent) {
+    var safeAgent = agent === 'claude' ? 'claude' : 'codex';
+    var flag = safeAgent === 'claude'
+      ? '--dangerously-skip-permissions'
+      : '--dangerously-bypass-approvals-and-sandbox';
+    var copy = safeAgent === 'claude'
+      ? 'Claude will be able to run with permission prompts skipped for this session. Only use this for projects you fully trust.'
+      : 'Codex will be able to execute commands, edit, and delete files without asking for confirmation. Only use this for projects you fully trust.';
+    document.getElementById('skip-flag').textContent = flag;
+    document.getElementById('skip-copy').textContent = copy;
+  }
+
+  function slugifyName(value, fallback) {
+    var raw = (value || '').trim().toLowerCase();
+    var slug = raw.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+    return slug || fallback || 'session';
+  }
+
+  function formatShortPath(path) {
+    var metaLabel = path || '';
+    if (metaLabel === '/' || !metaLabel) {
+      return 'workspace unknown';
+    }
+    metaLabel = metaLabel.replace(/^\/Users\/[^/]+/, '~');
+    if (metaLabel.length > 30) {
+      metaLabel = metaLabel.slice(0, 12) + '\u2026' + metaLabel.slice(-15);
+    }
+    return metaLabel;
+  }
 
   function openFolderPicker(name) {
     const input = document.getElementById('session-name');
@@ -938,6 +1120,7 @@
 
   function confirmSelection() {
     document.getElementById('folder-modal').classList.remove('active');
+    updateSkipModal(selectedAgent);
     document.getElementById('skip-modal').classList.add('active');
   }
 
@@ -950,15 +1133,34 @@
   });
 
   function launchSession(skip) {
+    if (resumeTarget) {
+      var resumeUrl = '/start/' + encodeURIComponent(resumeTarget.name)
+        + '?dir=' + encodeURIComponent(resumeTarget.cwd)
+        + '&agent=' + encodeURIComponent(resumeTarget.agent)
+        + '&session_id=' + encodeURIComponent(resumeTarget.session_id);
+      if (skip) resumeUrl += '&skip_permissions=1';
+      window.location.href = resumeUrl;
+      return;
+    }
+
+    if (captureTarget) {
+      var s = captureTarget;
+      var captureUrl = '/capture?pid=' + s.pid
+        + '&cwd=' + encodeURIComponent(s.cwd)
+        + '&name=' + encodeURIComponent(s.project_name)
+        + '&agent=' + encodeURIComponent(s.agent);
+      if (s.session_id) captureUrl += '&session_id=' + encodeURIComponent(s.session_id);
+      if (skip) captureUrl += '&skip_permissions=1';
+      window.location.href = captureUrl;
+      return;
+    }
+
     var dir = encodeURIComponent(currentAbsolute);
     var name = encodeURIComponent(sessionName);
-    var url = '/start/' + name + '?dir=' + dir;
+    var url = '/start/' + name + '?dir=' + dir + '&agent=' + encodeURIComponent(selectedAgent);
     if (skip) url += '&skip_permissions=1';
     window.location.href = url;
   }
-
-  // ── Capturable Sessions ──
-  var captureTarget = null;
 
   async function loadCapturable() {
     try {
@@ -986,6 +1188,8 @@
         link.onclick = function(e) {
           e.preventDefault();
           captureTarget = s;
+          resumeTarget = null;
+          updateSkipModal(s.agent);
           document.getElementById('skip-modal').classList.add('active');
         };
 
@@ -1003,15 +1207,7 @@
 
         var metaDiv = document.createElement('div');
         metaDiv.className = 'card-meta';
-        var metaLabel = s.cwd || '';
-        if (metaLabel === '/' || !metaLabel) {
-          metaLabel = 'workspace unknown';
-        } else {
-          metaLabel = metaLabel.replace(/^\/Users\/[^/]+/, '~');
-          if (metaLabel.length > 30) {
-            metaLabel = metaLabel.slice(0, 12) + '\u2026' + metaLabel.slice(-15);
-          }
-        }
+        var metaLabel = formatShortPath(s.cwd);
         metaDiv.textContent = 'PID ' + s.pid + ' \u00b7 ' + metaLabel;
 
         info.appendChild(nameDiv);
@@ -1024,7 +1220,7 @@
 
         var badge = document.createElement('span');
         badge.className = 'capture-badge';
-        badge.textContent = 'capture';
+        badge.textContent = (s.agent_label || 'capture') + ' capture';
 
         var arrow = document.createElement('span');
         arrow.className = 'arrow';
@@ -1043,31 +1239,126 @@
     }
   }
 
-  // Override launchSession to handle capture mode
-  var _originalLaunchSession = launchSession;
-  launchSession = function(skip) {
-    if (captureTarget) {
-      var s = captureTarget;
-      captureTarget = null;
-      var url = '/capture?pid=' + s.pid
-        + '&cwd=' + encodeURIComponent(s.cwd)
-        + '&name=' + encodeURIComponent(s.project_name)
-        + (s.session_id ? '&session_id=' + encodeURIComponent(s.session_id) : '');
-      if (skip) url += '&skip_permissions=1';
-      window.location.href = url;
-      return;
+  async function loadSavedThreads() {
+    try {
+      var responses = await Promise.all([
+        fetch('/api/saved-threads?agent=codex').then(function(r) { return r.json(); }).catch(function() { return { projects: [] }; }),
+        fetch('/api/saved-threads?agent=claude').then(function(r) { return r.json(); }).catch(function() { return { projects: [] }; })
+      ]);
+      var projects = [];
+      responses.forEach(function(payload) {
+        if (payload && Array.isArray(payload.projects)) {
+          projects = projects.concat(payload.projects);
+        }
+      });
+
+      var section = document.getElementById('saved-section');
+      var container = document.getElementById('saved-projects');
+      if (!projects.length) {
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = '';
+      container.textContent = '';
+
+      projects.forEach(function(project) {
+        var details = document.createElement('details');
+        details.className = 'saved-project';
+
+        var summary = document.createElement('summary');
+        summary.className = 'saved-summary';
+
+        var left = document.createElement('div');
+        left.className = 'saved-summary-left';
+
+        var name = document.createElement('div');
+        name.className = 'card-name';
+        name.textContent = project.project_name;
+
+        var meta = document.createElement('div');
+        meta.className = 'saved-summary-meta';
+        meta.textContent = (project.agent_label || project.agent) + ' \u00b7 ' + project.thread_count + (project.thread_count === 1 ? ' thread' : ' threads');
+
+        left.appendChild(name);
+        left.appendChild(meta);
+
+        var right = document.createElement('div');
+        right.className = 'saved-summary-right';
+
+        var badge = document.createElement('span');
+        badge.className = 'capture-badge';
+        badge.textContent = (project.agent_label || project.agent) + ' resume';
+
+        var arrow = document.createElement('span');
+        arrow.className = 'arrow';
+        arrow.textContent = '\u203A';
+
+        right.appendChild(badge);
+        right.appendChild(arrow);
+
+        summary.appendChild(left);
+        summary.appendChild(right);
+        details.appendChild(summary);
+
+        var threadList = document.createElement('div');
+        threadList.className = 'saved-thread-list';
+
+        (project.threads || []).forEach(function(thread) {
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'saved-thread';
+          button.onclick = function() {
+            captureTarget = null;
+            resumeTarget = {
+              agent: project.agent,
+              session_id: thread.session_id,
+              cwd: thread.project_path || project.project_path,
+              name: slugifyName(thread.summary || thread.first_prompt || project.project_name, project.project_name)
+            };
+            updateSkipModal(project.agent);
+            document.getElementById('skip-modal').classList.add('active');
+          };
+
+          var title = document.createElement('div');
+          title.className = 'saved-thread-title';
+          title.textContent = thread.summary || thread.first_prompt || thread.session_id;
+
+          var threadMeta = document.createElement('div');
+          threadMeta.className = 'saved-thread-meta';
+          threadMeta.textContent = formatShortPath(thread.project_path || project.project_path);
+
+          button.appendChild(title);
+          button.appendChild(threadMeta);
+          threadList.appendChild(button);
+        });
+
+        if (!threadList.childNodes.length) {
+          var empty = document.createElement('div');
+          empty.className = 'saved-empty';
+          empty.textContent = 'No resumable threads';
+          threadList.appendChild(empty);
+        }
+
+        details.appendChild(threadList);
+        container.appendChild(details);
+      });
+    } catch (e) {
+      // silently fail
     }
-    _originalLaunchSession(skip);
-  };
+  }
 
   // Also reset captureTarget when skip-modal is closed
   var _originalCloseSkipModal = closeSkipModal;
   closeSkipModal = function() {
     captureTarget = null;
+    resumeTarget = null;
     _originalCloseSkipModal();
   };
 
   loadCapturable();
+  loadSavedThreads();
+  setSelectedAgent('codex');
 
   // ── Pull to refresh (mobile) ──
   (function() {

@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Dual-agent sessions** — support launching, resuming, and managing both Codex CLI and Claude Code sessions from the same hub, including Claude capture via `--resume ... --fork-session`
+- **Agent-aware dashboard** — add a Codex/Claude selector for new sessions and tag active or capturable sessions with their originating CLI so mixed work stays distinguishable
+- **Saved thread browser** — show resumable Codex and Claude threads directly on the homepage, grouped by project so each repo folder expands into its associated threads instead of showing a flat global list
+
 ### Fixed
+- **Canonical project grouping** — collapse Claude worktrees and nested workspace paths back to their repo roots so saved threads appear under recognizable project folders like `subdact` or `predact-website`
+
 - **Window screenshot chooser** — turn the mobile `Window` control into a real list of open macOS windows, use titles when macOS exposes them, and capture the selected window by CoreGraphics ID instead of opening the interactive camera picker
 - **Window picker scrolling** — make the mobile window chooser sheet and its list use touch scrolling correctly on iPhone Safari so long window lists remain reachable
 - **Focused mobile composer** — expand the phone input into a full-screen compose state when focused so Safari keyboard entry leaves more room for editing long prompts and URLs

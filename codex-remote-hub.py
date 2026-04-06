@@ -48,18 +48,17 @@ def _find_bin(name: str) -> str:
     return path if path else name
 
 
-def _session_name(name: str) -> str:
-    """Build tmux session name, avoiding double 'codex-' prefix."""
-    if name.startswith("codex-"):
-        return name
-    return f"codex-{name}"
+AGENT_CODEX = "codex"
+AGENT_CLAUDE = "claude"
+DEFAULT_AGENT = AGENT_CODEX
+AGENT_ORDER = [AGENT_CODEX, AGENT_CLAUDE]
 
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 HUB_PORT = int(os.environ.get("CODEX_REMOTE_HUB_PORT", 7690))
 BASE_PORT = 7800
-MAX_PORT = 7899
+MAX_PORT = 7999
 def _resolve_bin(env_var: str, name: str) -> str:
     """Get binary path from env var, falling back to PATH lookup if missing or stale."""
     path = os.environ.get(env_var, "")
@@ -70,6 +69,7 @@ def _resolve_bin(env_var: str, name: str) -> str:
 TTYD_BIN = _resolve_bin("TTYD_BIN", "ttyd")
 TMUX_BIN = _resolve_bin("TMUX_BIN", "tmux")
 CODEX_BIN = _resolve_bin("CODEX_BIN", "codex")
+CLAUDE_BIN = _resolve_bin("CLAUDE_BIN", "claude")
 FONT_SIZE = int(os.environ.get("CODEX_FONT_SIZE", 11))
 DEV_ROOT = os.environ.get("CODEX_DEV_ROOT", os.path.expanduser("~/Projects"))
 INSTALL_DIR = os.environ.get("CODEX_REMOTE_HUB_DIR", os.path.expanduser("~/.codex-remote-hub"))
@@ -82,8 +82,51 @@ _template_cache: dict[str, tuple[float, str]] = {}
 TTYD_PATCH_MARKER = "codex-remote-hub-mobile-v1"
 HUB_AGENTS_START = "<!-- codex-remote-hub:start -->"
 HUB_AGENTS_END = "<!-- codex-remote-hub:end -->"
+AGENT_SPECS: dict[str, dict[str, str]] = {
+    AGENT_CODEX: {
+        "label": "Codex",
+        "product": "Codex CLI",
+        "session_prefix": "codex-",
+        "bin": CODEX_BIN,
+        "skip_flag": "--dangerously-bypass-approvals-and-sandbox",
+        "session_env_block": "CODEX_HOME",
+        "ttyd_title": "Codex Remote Hub",
+        "ttyd_cursor": "#10a37f",
+    },
+    AGENT_CLAUDE: {
+        "label": "Claude",
+        "product": "Claude Code",
+        "session_prefix": "claude-",
+        "bin": CLAUDE_BIN,
+        "skip_flag": "--dangerously-skip-permissions",
+        "session_env_block": "CLAUDECODE",
+        "ttyd_title": "Claude Remote Shell",
+        "ttyd_cursor": "#E8734A",
+    },
+}
+AGENT_PORTS: dict[str, tuple[int, int]] = {
+    AGENT_CODEX: (7800, 7899),
+    AGENT_CLAUDE: (7900, 7999),
+}
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _normalize_agent(value: Optional[str]) -> str:
+    """Normalize an agent selector, defaulting to Codex."""
+    candidate = (value or DEFAULT_AGENT).strip().lower()
+    return candidate if candidate in AGENT_SPECS else DEFAULT_AGENT
+
+
+def _agent_spec(agent: Optional[str]) -> dict[str, str]:
+    """Return the configuration record for an agent."""
+    return AGENT_SPECS[_normalize_agent(agent)]
+
+
+def _session_name(name: str, agent: str = DEFAULT_AGENT) -> str:
+    """Build a tmux session name for the selected agent."""
+    prefix = _agent_spec(agent)["session_prefix"]
+    return name if name.startswith(prefix) else f"{prefix}{name}"
 
 
 def _ssl_cert_paths() -> tuple[str, str]:
@@ -113,9 +156,13 @@ def _assets_root_dir() -> str:
     return os.path.realpath(os.path.expanduser("~/Pictures/Screenshots"))
 
 
-def _session_asset_dir(name: str, ensure: bool = False) -> str:
+def _session_asset_dir(name: str, agent: str = DEFAULT_AGENT, ensure: bool = False) -> str:
     """Return the per-session asset directory path."""
-    asset_dir = os.path.join(_assets_root_dir(), _safe_path_segment(name))
+    safe_name = _safe_path_segment(name)
+    if _normalize_agent(agent) == AGENT_CODEX:
+        asset_dir = os.path.join(_assets_root_dir(), safe_name)
+    else:
+        asset_dir = os.path.join(_assets_root_dir(), _normalize_agent(agent), safe_name)
     if ensure:
         os.makedirs(asset_dir, exist_ok=True)
     return asset_dir
@@ -150,9 +197,9 @@ def _sanitize_upload_name(filename: str, content_type: str) -> str:
     return safe_stem + safe_ext
 
 
-def _list_session_assets(name: str) -> list[dict]:
+def _list_session_assets(name: str, agent: str = DEFAULT_AGENT) -> list[dict]:
     """Return image assets for a session, newest first."""
-    asset_dir = _session_asset_dir(name)
+    asset_dir = _session_asset_dir(name, agent=agent)
     if not os.path.isdir(asset_dir):
         return []
 
@@ -167,7 +214,7 @@ def _list_session_assets(name: str) -> list[dict]:
             assets.append({
                 "name": entry.name,
                 "path": os.path.realpath(entry.path),
-                "url": f"/assets/{_safe_path_segment(name)}/{entry.name}",
+                "url": f"/assets/{_safe_path_segment(name)}/{entry.name}?agent={_normalize_agent(agent)}",
                 "updated": int(stat.st_mtime * 1000),
                 "size": stat.st_size,
             })
@@ -207,9 +254,10 @@ def _parse_uploaded_images(content_type: str, body: bytes) -> list[dict]:
     return uploads
 
 
-def _store_uploaded_images(name: str, uploads: list[dict]) -> list[dict]:
+def _store_uploaded_images(name: str, uploads: list[dict], agent: str = DEFAULT_AGENT) -> list[dict]:
     """Persist uploaded images for a session and return their metadata."""
-    asset_dir = _session_asset_dir(name, ensure=True)
+    safe_agent = _normalize_agent(agent)
+    asset_dir = _session_asset_dir(name, agent=safe_agent, ensure=True)
     saved: list[dict] = []
     for upload in uploads:
         content_type = upload.get("content_type", "")
@@ -232,7 +280,10 @@ def _store_uploaded_images(name: str, uploads: list[dict]) -> list[dict]:
         saved.append({
             "name": os.path.basename(target),
             "path": os.path.realpath(target),
-            "url": f"/assets/{_safe_path_segment(name)}/{os.path.basename(target)}",
+            "url": (
+                f"/assets/{_safe_path_segment(name)}/{os.path.basename(target)}"
+                f"?agent={safe_agent}"
+            ),
             "updated": int(stat.st_mtime * 1000),
             "size": stat.st_size,
         })
@@ -332,19 +383,22 @@ def _ensure_dev_root_agents(directory: Optional[str]) -> None:
         return
 
 
-def _session_env(name: str) -> dict[str, str]:
-    """Build a child environment for Codex sessions."""
-    clean_env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+def _session_env(name: str, agent: str = DEFAULT_AGENT) -> dict[str, str]:
+    """Build a child environment for hub-managed CLI sessions."""
+    safe_agent = _normalize_agent(agent)
+    blocked_key = _agent_spec(safe_agent)["session_env_block"]
+    clean_env = {k: v for k, v in os.environ.items() if k != blocked_key}
     clean_env["PATH"] = INSTALL_DIR + os.pathsep + clean_env.get("PATH", "")
     clean_env["CODEX_REMOTE_HUB_ASSETS_DIR"] = _assets_root_dir()
-    clean_env["CODEX_REMOTE_HUB_ASSET_DIR"] = _session_asset_dir(name, ensure=True)
-    clean_env["CODEX_REMOTE_HUB_SESSION"] = _safe_path_segment(name)
+    clean_env["CODEX_REMOTE_HUB_ASSET_DIR"] = _session_asset_dir(name, agent=safe_agent, ensure=True)
+    clean_env["CODEX_REMOTE_HUB_SESSION"] = f"{safe_agent}-{_safe_path_segment(name)}"
+    clean_env["CODEX_REMOTE_HUB_AGENT"] = safe_agent
     clean_env["CODEX_REMOTE_HUB_BASE_URL"] = _public_base_url()
     clean_env["CODEX_REMOTE_HUB_SCREENSHOT_CMD"] = _codex_remote_shot_command()
     return clean_env
 
 
-def _take_session_screenshot(name: str, mode: str = "screen") -> dict:
+def _take_session_screenshot(name: str, mode: str = "screen", agent: str = DEFAULT_AGENT) -> dict:
     """Capture a screenshot for a session and return saved asset metadata."""
     helper_path = os.path.join(INSTALL_DIR, "codex-remote-shot")
     if not os.path.exists(helper_path):
@@ -367,7 +421,7 @@ def _take_session_screenshot(name: str, mode: str = "screen") -> dict:
         ["bash", helper_path, helper_mode],
         capture_output=True,
         text=True,
-        env=_session_env(name),
+        env=_session_env(name, agent=agent),
         timeout=180,
     )
     if proc.returncode != 0:
@@ -385,7 +439,7 @@ def _take_session_screenshot(name: str, mode: str = "screen") -> dict:
 
     parsed = urlparse(public_url)
     filename = os.path.basename(parsed.path)
-    asset_path, _mime_type = _resolve_session_asset_file(name, filename)
+    asset_path, _mime_type = _resolve_session_asset_file(name, filename, agent=agent)
     if not asset_path:
         raise RuntimeError("Screenshot file was not saved in the session asset directory")
 
@@ -393,7 +447,7 @@ def _take_session_screenshot(name: str, mode: str = "screen") -> dict:
     return {
         "name": filename,
         "path": asset_path,
-        "url": f"/assets/{_safe_path_segment(name)}/{filename}",
+        "url": f"/assets/{_safe_path_segment(name)}/{filename}?agent={_normalize_agent(agent)}",
         "public_url": public_url,
         "updated": int(stat.st_mtime * 1000),
         "size": stat.st_size,
@@ -496,7 +550,9 @@ def _list_macos_windows() -> list[dict]:
     return deduped
 
 
-def _take_session_window_screenshot(name: str, window_id: int) -> dict:
+def _take_session_window_screenshot(
+    name: str, window_id: int, agent: str = DEFAULT_AGENT
+) -> dict:
     """Capture a screenshot for a specific macOS window ID."""
     helper_path = os.path.join(INSTALL_DIR, "codex-remote-shot")
     if not os.path.exists(helper_path):
@@ -510,7 +566,7 @@ def _take_session_window_screenshot(name: str, window_id: int) -> dict:
         ["bash", helper_path, "window-id", str(window_id)],
         capture_output=True,
         text=True,
-        env=_session_env(name),
+        env=_session_env(name, agent=agent),
         timeout=180,
     )
     if proc.returncode != 0:
@@ -528,7 +584,7 @@ def _take_session_window_screenshot(name: str, window_id: int) -> dict:
 
     parsed = urlparse(public_url)
     filename = os.path.basename(parsed.path)
-    asset_path, _mime_type = _resolve_session_asset_file(name, filename)
+    asset_path, _mime_type = _resolve_session_asset_file(name, filename, agent=agent)
     if not asset_path:
         raise RuntimeError("Screenshot file was not saved in the session asset directory")
 
@@ -536,7 +592,7 @@ def _take_session_window_screenshot(name: str, window_id: int) -> dict:
     return {
         "name": filename,
         "path": asset_path,
-        "url": f"/assets/{_safe_path_segment(name)}/{filename}",
+        "url": f"/assets/{_safe_path_segment(name)}/{filename}?agent={_normalize_agent(agent)}",
         "public_url": public_url,
         "updated": int(stat.st_mtime * 1000),
         "size": stat.st_size,
@@ -545,7 +601,9 @@ def _take_session_window_screenshot(name: str, window_id: int) -> dict:
     }
 
 
-def _resolve_session_asset_file(name: str, filename: str) -> tuple[Optional[str], Optional[str]]:
+def _resolve_session_asset_file(
+    name: str, filename: str, agent: str = DEFAULT_AGENT
+) -> tuple[Optional[str], Optional[str]]:
     """Resolve and validate a session asset path.
 
     Returns:
@@ -565,7 +623,7 @@ def _resolve_session_asset_file(name: str, filename: str) -> tuple[Optional[str]
     if not _is_session_asset_filename(safe_filename):
         return None, None
 
-    asset_dir = _session_asset_dir(safe_name)
+    asset_dir = _session_asset_dir(safe_name, agent=agent)
     candidate = os.path.realpath(os.path.join(asset_dir, safe_filename))
     asset_root = os.path.realpath(asset_dir)
 
@@ -587,11 +645,12 @@ def _tts_asset_extension(content_type: str) -> str:
     return ".wav"
 
 
-def _write_session_tts_asset(name: str, text: str) -> dict:
+def _write_session_tts_asset(name: str, text: str, agent: str = DEFAULT_AGENT) -> dict:
     """Generate local speech audio and persist it in the session asset directory."""
     audio_bytes, content_type = _synthesize_tts_audio(text)
     safe_name = _safe_path_segment(name)
-    asset_dir = _session_asset_dir(safe_name, ensure=True)
+    safe_agent = _normalize_agent(agent)
+    asset_dir = _session_asset_dir(safe_name, agent=safe_agent, ensure=True)
     filename = f"tts-reply-{int(time.time() * 1000)}{_tts_asset_extension(content_type)}"
     target_path = os.path.join(asset_dir, filename)
 
@@ -602,7 +661,7 @@ def _write_session_tts_asset(name: str, text: str) -> dict:
     return {
         "name": filename,
         "path": target_path,
-        "url": f"/assets/{safe_name}/{filename}",
+        "url": f"/assets/{safe_name}/{filename}?agent={safe_agent}",
         "content_type": content_type,
         "updated": int(stat.st_mtime * 1000),
         "size": stat.st_size,
@@ -771,25 +830,40 @@ def _load_template(name: str) -> str:
 
 def _is_codex_cli_process(command: str) -> bool:
     """Return True if the command string looks like an interactive Codex CLI process."""
-    # Must contain 'codex' somewhere
-    if "codex" not in command.lower():
+    command_lower = command.lower()
+    if "codex" not in command_lower:
         return False
-    # Exclude non-CLI processes
     excludes = [
         ".vscode", "codex-remote-hub",
         "ttyd", "--print", "codex_", "electron",
         "node ", "python ", "python3 ",
     ]
     for ex in excludes:
-        if ex in command:
+        if ex in command_lower:
             return False
-    # Must look like the CLI binary (ends with /codex or is just "codex" with args)
     parts = command.split()
     if not parts:
         return False
-    bin_part = parts[0]
-    basename = os.path.basename(bin_part)
-    return basename == "codex"
+    return os.path.basename(parts[0]).lower() == "codex"
+
+
+def _is_claude_cli_process(command: str) -> bool:
+    """Return True if the command string looks like an interactive Claude CLI process."""
+    command_lower = command.lower()
+    if "claude" not in command_lower:
+        return False
+    excludes = [
+        ".vscode", "claude.app", "claude helper", "claude-remote-hub",
+        "ttyd", "--print", "claude_", "/claude/", "electron",
+        "node ", "python ", "python3 ",
+    ]
+    for ex in excludes:
+        if ex in command_lower:
+            return False
+    parts = command.split()
+    if not parts:
+        return False
+    return os.path.basename(parts[0]).lower() == "claude"
 
 
 def _get_process_cwd(pid: int) -> Optional[str]:
@@ -883,16 +957,16 @@ def _resolve_workspace_cwd(workspace_name: str) -> Optional[str]:
     return None
 
 
-def _friendly_process_source(command: str) -> str:
+def _friendly_process_source(command: str, agent: str = DEFAULT_AGENT) -> str:
     """Return a short source label when no repo/folder context can be inferred."""
     if "Cursor" in command or ".cursor/" in command:
         return "Cursor"
     if "Codex.app" in command:
         return "Codex"
-    return "Codex CLI"
+    return _agent_spec(agent)["product"]
 
 
-def _find_latest_session_id(cwd: str) -> Optional[str]:
+def _find_latest_codex_session_id(cwd: str) -> Optional[str]:
     """Find the most recent Codex session ID for a given project directory."""
     # Codex stores sessions in ~/.codex/sessions/
     codex_dir = os.path.expanduser("~/.codex/sessions")
@@ -910,10 +984,428 @@ def _find_latest_session_id(cwd: str) -> Optional[str]:
     return None
 
 
-def port_for_name(name: str) -> int:
-    """Generate a deterministic port (7800-7899) from a session name."""
-    h = int(hashlib.md5(name.encode()).hexdigest(), 16)
-    return BASE_PORT + (h % (MAX_PORT - BASE_PORT))
+def _has_conversation_content(filepath: str) -> bool:
+    """Check whether a Claude session file contains actual conversation turns."""
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if '"userType"' in line:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def _find_latest_claude_session_id(cwd: str) -> Optional[str]:
+    """Find the most recent Claude session ID for a given project directory."""
+    claude_dir = os.path.expanduser("~/.claude/projects")
+    if not os.path.isdir(claude_dir):
+        return None
+
+    project_key = (cwd or "").replace("/", "-")
+    project_dir = os.path.join(claude_dir, project_key)
+    if not os.path.isdir(project_dir):
+        return None
+
+    session_files = _glob.glob(os.path.join(project_dir, "*.jsonl"))
+    for filepath in sorted(session_files, key=os.path.getmtime, reverse=True):
+        if _has_conversation_content(filepath):
+            return os.path.splitext(os.path.basename(filepath))[0]
+    return None
+
+
+def _find_latest_session_id(cwd: str, agent: str = DEFAULT_AGENT) -> Optional[str]:
+    """Find the newest known session/thread ID for the selected agent."""
+    safe_agent = _normalize_agent(agent)
+    if safe_agent == AGENT_CLAUDE:
+        return _find_latest_claude_session_id(cwd)
+    return _find_latest_codex_session_id(cwd)
+
+
+def _claude_projects_dir() -> str:
+    """Return the root directory where Claude stores project sessions."""
+    return os.path.expanduser("~/.claude/projects")
+
+
+def _extract_message_text(content) -> str:
+    """Flatten a Claude message content payload into a short text preview."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        return " ".join(parts).strip()
+    return ""
+
+
+def _find_git_root(path: str) -> str:
+    """Return the nearest ancestor directory that owns a .git entry."""
+    current = os.path.realpath(path or "")
+    if not current:
+        return ""
+    if not os.path.isdir(current):
+        current = os.path.dirname(current)
+    while current and current != os.path.dirname(current):
+        if os.path.exists(os.path.join(current, ".git")):
+            return current
+        current = os.path.dirname(current)
+    return ""
+
+
+def _canonical_project_info(path: str) -> tuple[str, str]:
+    """Collapse worktree and nested paths back to a canonical project root."""
+    raw = os.path.realpath(path or "")
+    if not raw:
+        return "Unknown Project", ""
+
+    marker = f"{os.sep}.claude{os.sep}worktrees{os.sep}"
+    if marker in raw:
+        raw = raw.split(marker, 1)[0]
+
+    hidden_marker = f"{os.sep}.claude-worktrees{os.sep}"
+    if hidden_marker in raw:
+        suffix = raw.split(hidden_marker, 1)[1]
+        repo_name = suffix.split(os.sep, 1)[0]
+        resolved = _resolve_workspace_cwd(repo_name) or os.path.join(os.path.expanduser("~/Documents/GitHub"), repo_name)
+        raw = os.path.realpath(resolved)
+
+    git_root = _find_git_root(raw)
+    if git_root:
+        name = os.path.basename(git_root.rstrip(os.sep)) or git_root
+        return name, git_root
+
+    github_root = os.path.realpath(os.path.expanduser("~/Documents/GitHub"))
+    github_prefix = github_root + os.sep
+    if raw == github_root:
+        return os.path.basename(github_root.rstrip(os.sep)) or github_root, github_root
+    if raw.startswith(github_prefix):
+        remainder = raw[len(github_prefix):]
+        repo_name = remainder.split(os.sep, 1)[0]
+        if repo_name:
+            canonical = os.path.join(github_root, repo_name)
+            return repo_name, canonical
+
+    if raw in {os.sep, os.path.expanduser("~")}:
+        return "Unknown Project", ""
+
+    name = os.path.basename(raw.rstrip(os.sep)) or raw
+    return name, raw
+
+
+def _read_claude_jsonl_summary(filepath: str) -> dict[str, Optional[str]]:
+    """Extract lightweight metadata from a Claude session jsonl file."""
+    info: dict[str, Optional[str]] = {
+        "cwd": None,
+        "first_prompt": None,
+        "summary": None,
+        "modified": None,
+        "message_count": None,
+    }
+    message_count = 0
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if payload.get("type") not in {"user", "assistant"}:
+                    continue
+                message_count += 1
+                cwd = payload.get("cwd")
+                if isinstance(cwd, str) and cwd and not info["cwd"]:
+                    info["cwd"] = cwd
+                message = payload.get("message") or {}
+                if payload.get("type") == "user" and not info["first_prompt"]:
+                    text = _extract_message_text(message.get("content"))
+                    if text:
+                        info["first_prompt"] = text
+                if payload.get("type") == "assistant" and not info["summary"]:
+                    text = _extract_message_text(message.get("content"))
+                    if text:
+                        info["summary"] = text
+        stat = os.stat(filepath)
+        info["modified"] = datetime.fromtimestamp(stat.st_mtime).isoformat()
+    except OSError:
+        return info
+
+    info["message_count"] = message_count
+    if not info["summary"]:
+        info["summary"] = info["first_prompt"]
+    return info
+
+
+def _discover_saved_claude_projects() -> list[dict]:
+    """Return persisted Claude project folders and their saved threads."""
+    projects_root = _claude_projects_dir()
+    if not os.path.isdir(projects_root):
+        return []
+
+    projects: list[dict] = []
+    try:
+        entries = sorted(os.scandir(projects_root), key=lambda item: item.name.lower())
+    except OSError:
+        return []
+
+    for entry in entries:
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+
+        project_dir = entry.path
+        index_path = os.path.join(project_dir, "sessions-index.json")
+        project_path = None
+        index_entries: list[dict] = []
+        if os.path.isfile(index_path):
+            try:
+                with open(index_path, "r", encoding="utf-8") as f:
+                    index_payload = json.load(f)
+                original_path = index_payload.get("originalPath")
+                if isinstance(original_path, str) and original_path:
+                    project_path = original_path
+                raw_entries = index_payload.get("entries")
+                if isinstance(raw_entries, list):
+                    index_entries = [item for item in raw_entries if isinstance(item, dict)]
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        threads_by_id: dict[str, dict] = {}
+        for item in index_entries:
+            session_id = item.get("sessionId")
+            if not isinstance(session_id, str) or not session_id:
+                continue
+            project_path = item.get("projectPath") or project_path
+            threads_by_id[session_id] = {
+                "session_id": session_id,
+                "summary": item.get("summary") or item.get("firstPrompt") or session_id,
+                "first_prompt": item.get("firstPrompt") or "",
+                "project_path": item.get("projectPath") or project_path or "",
+                "message_count": item.get("messageCount") or 0,
+                "git_branch": item.get("gitBranch") or "",
+                "modified": item.get("modified") or "",
+                "created": item.get("created") or "",
+                "is_sidechain": bool(item.get("isSidechain")),
+            }
+
+        jsonl_paths = sorted(
+            _glob.glob(os.path.join(project_dir, "*.jsonl")),
+            key=lambda path: os.path.getmtime(path),
+            reverse=True,
+        )
+        for filepath in jsonl_paths:
+            session_id = os.path.splitext(os.path.basename(filepath))[0]
+            if session_id in threads_by_id:
+                continue
+            summary = _read_claude_jsonl_summary(filepath)
+            inferred_path = summary.get("cwd") or project_path or ""
+            threads_by_id[session_id] = {
+                "session_id": session_id,
+                "summary": summary.get("summary") or summary.get("first_prompt") or session_id,
+                "first_prompt": summary.get("first_prompt") or "",
+                "project_path": inferred_path,
+                "message_count": summary.get("message_count") or 0,
+                "git_branch": "",
+                "modified": summary.get("modified") or "",
+                "created": "",
+                "is_sidechain": False,
+            }
+            if not project_path and inferred_path:
+                project_path = inferred_path
+
+        if not threads_by_id:
+            continue
+
+        resolved_project_path = project_path if isinstance(project_path, str) else ""
+        project_name, canonical_path = _canonical_project_info(resolved_project_path or entry.name)
+        if not canonical_path:
+            continue
+        threads = list(threads_by_id.values())
+        for thread in threads:
+            thread["project_path"] = canonical_path or thread.get("project_path") or resolved_project_path
+        threads.sort(key=lambda item: item.get("modified") or "", reverse=True)
+        latest_modified = next((item.get("modified") or "" for item in threads if item.get("modified")), "")
+        projects.append({
+            "agent": AGENT_CLAUDE,
+            "agent_label": _agent_spec(AGENT_CLAUDE)["label"],
+            "project_name": project_name or "Claude Project",
+            "project_path": canonical_path or resolved_project_path,
+            "thread_count": len(threads),
+            "modified": latest_modified,
+            "threads": threads,
+        })
+
+    grouped: dict[tuple[str, str], dict] = {}
+    for project in projects:
+        key = (project["project_name"], project["project_path"])
+        group = grouped.setdefault(key, {
+            "agent": AGENT_CLAUDE,
+            "agent_label": _agent_spec(AGENT_CLAUDE)["label"],
+            "project_name": project["project_name"],
+            "project_path": project["project_path"],
+            "thread_count": 0,
+            "modified": "",
+            "threads": [],
+        })
+        group["threads"].extend(project["threads"])
+
+    merged_projects = list(grouped.values())
+    for project in merged_projects:
+        deduped: dict[str, dict] = {}
+        for thread in project["threads"]:
+            deduped[thread["session_id"]] = thread
+        project["threads"] = sorted(
+            deduped.values(),
+            key=lambda item: item.get("modified") or "",
+            reverse=True,
+        )
+        project["thread_count"] = len(project["threads"])
+        project["modified"] = project["threads"][0].get("modified") or "" if project["threads"] else ""
+
+    merged_projects.sort(key=lambda item: item.get("modified") or "", reverse=True)
+    return merged_projects
+
+
+def _read_codex_session_index() -> dict[str, dict]:
+    """Return Codex session index entries keyed by session/thread id."""
+    index_path = os.path.expanduser("~/.codex/session_index.jsonl")
+    entries: dict[str, dict] = {}
+    try:
+        with open(index_path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                session_id = payload.get("id")
+                if isinstance(session_id, str) and session_id:
+                    entries[session_id] = payload
+    except OSError:
+        return {}
+    return entries
+
+
+def _extract_codex_thread_name(session_id: str, session_meta: dict, index_entry: Optional[dict]) -> str:
+    """Resolve a human-readable Codex thread name."""
+    if isinstance(index_entry, dict):
+        name = index_entry.get("thread_name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    cwd = session_meta.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        return os.path.basename(cwd.rstrip(os.sep)) or session_id
+    return session_id
+
+
+def _discover_saved_codex_projects() -> list[dict]:
+    """Return persisted Codex sessions grouped by project path."""
+    sessions_root = os.path.expanduser("~/.codex/sessions")
+    if not os.path.isdir(sessions_root):
+        return []
+
+    index_entries = _read_codex_session_index()
+    projects_by_path: dict[str, dict] = {}
+    for filepath in sorted(_glob.glob(os.path.join(sessions_root, "*", "*", "*", "*.jsonl")), reverse=True):
+        session_meta = None
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                for _ in range(12):
+                    line = f.readline()
+                    if not line:
+                        break
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if payload.get("type") == "session_meta":
+                        session_meta = payload.get("payload") or {}
+                        break
+        except OSError:
+            continue
+        if not isinstance(session_meta, dict):
+            continue
+
+        session_id = session_meta.get("id")
+        cwd = session_meta.get("cwd")
+        if not isinstance(session_id, str) or not session_id:
+            continue
+        if not isinstance(cwd, str) or not cwd:
+            continue
+
+        project_name, canonical_path = _canonical_project_info(cwd)
+        key_path = canonical_path or os.path.realpath(cwd)
+        project = projects_by_path.setdefault(key_path, {
+            "agent": AGENT_CODEX,
+            "agent_label": _agent_spec(AGENT_CODEX)["label"],
+            "project_name": project_name,
+            "project_path": key_path,
+            "thread_count": 0,
+            "modified": "",
+            "threads": [],
+        })
+
+        index_entry = index_entries.get(session_id, {})
+        modified = ""
+        updated_at = index_entry.get("updated_at") if isinstance(index_entry, dict) else None
+        if isinstance(updated_at, str) and updated_at:
+            modified = updated_at
+        else:
+            timestamp = session_meta.get("timestamp")
+            if isinstance(timestamp, str):
+                modified = timestamp
+
+        thread = {
+            "session_id": session_id,
+            "summary": _extract_codex_thread_name(session_id, session_meta, index_entry),
+            "first_prompt": "",
+            "project_path": key_path,
+            "message_count": 0,
+            "git_branch": session_meta.get("git_branch") or "",
+            "modified": modified,
+            "created": session_meta.get("timestamp") or "",
+            "is_sidechain": False,
+        }
+        project["threads"].append(thread)
+
+    projects = list(projects_by_path.values())
+    for project in projects:
+        project["threads"].sort(key=lambda item: item.get("modified") or "", reverse=True)
+        project["thread_count"] = len(project["threads"])
+        project["modified"] = project["threads"][0].get("modified") or "" if project["threads"] else ""
+
+    projects.sort(key=lambda item: item.get("modified") or "", reverse=True)
+    return projects
+
+
+def _is_agent_cli_process(command: str, agent: str) -> bool:
+    """Dispatch CLI process detection for the selected agent."""
+    if _normalize_agent(agent) == AGENT_CLAUDE:
+        return _is_claude_cli_process(command)
+    return _is_codex_cli_process(command)
+
+
+def _agent_port_bounds(agent: str) -> tuple[int, int]:
+    """Return the ttyd port range reserved for an agent."""
+    return AGENT_PORTS[_normalize_agent(agent)]
+
+
+def port_for_name(name: str, agent: str = DEFAULT_AGENT) -> int:
+    """Generate a deterministic ttyd port for a session."""
+    safe_agent = _normalize_agent(agent)
+    range_start, range_end = _agent_port_bounds(safe_agent)
+    seed = name if safe_agent == AGENT_CODEX else f"{safe_agent}:{name}"
+    span = max(range_end - range_start, 1)
+    h = int(hashlib.md5(seed.encode()).hexdigest(), 16)
+    return range_start + (h % span)
 
 
 def _port_in_use_socket(port: int) -> bool:
@@ -1001,7 +1493,7 @@ def _cleanup_orphan_ttyd() -> None:
             ["ps", "-ww", "-eo", "pid,command"],
             text=True, stderr=subprocess.DEVNULL
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return
     for line in ps_out.strip().split("\n"):
         parts = line.split(None, 1)
@@ -1033,8 +1525,8 @@ def _cleanup_orphan_ttyd() -> None:
                 pass
 
 
-def get_sessions() -> list[dict]:
-    """List active Codex tmux sessions with their status."""
+def get_sessions(agent: Optional[str] = None) -> list[dict]:
+    """List active hub-managed tmux sessions with their status."""
     _cleanup_orphan_ttyd()
     try:
         from concurrent.futures import ThreadPoolExecutor
@@ -1049,32 +1541,54 @@ def get_sessions() -> list[dict]:
             out = tmux_future.result(timeout=3)
             ttyd_ports = ports_future.result(timeout=3)
         sessions: list[dict] = []
+        selected_agent = _normalize_agent(agent) if agent else None
         for line in out.strip().split("\n"):
-            if not line.startswith("codex-"):
+            if not line:
                 continue
             parts = line.split("|")
-            name = parts[0].removeprefix("codex-")
+            session_name = parts[0]
+            session_agent = None
+            session_prefix = ""
+            for candidate in AGENT_ORDER:
+                prefix = _agent_spec(candidate)["session_prefix"]
+                if session_name.startswith(prefix):
+                    session_agent = candidate
+                    session_prefix = prefix
+                    break
+            if not session_agent:
+                continue
+            if selected_agent and session_agent != selected_agent:
+                continue
+            name = session_name.removeprefix(session_prefix)
             try:
-                last_activity = datetime.fromtimestamp(int(parts[1]))
+                activity_ts = int(parts[1])
+                last_activity = datetime.fromtimestamp(activity_ts)
                 time_str = last_activity.strftime("%H:%M")
             except (ValueError, IndexError):
+                activity_ts = 0
                 time_str = "?"
             attached = parts[3] if len(parts) > 3 else "0"
-            port = port_for_name(name)
+            port = port_for_name(name, session_agent)
             sessions.append({
+                "agent": session_agent,
+                "agent_label": _agent_spec(session_agent)["label"],
+                "product": _agent_spec(session_agent)["product"],
                 "name": name,
+                "session_name": session_name,
                 "port": port,
                 "time": time_str,
+                "activity_ts": activity_ts,
                 "attached": attached != "0",
                 "has_ttyd": port in ttyd_ports,
             })
+        sessions.sort(key=lambda item: (-item["activity_ts"], AGENT_ORDER.index(item["agent"]), item["name"]))
         return sessions
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return []
 
 
-def discover_capturable_sessions() -> list:
-    """Find Codex CLI processes running outside the hub's tmux sessions."""
+def discover_capturable_sessions(agent: Optional[str] = None) -> list[dict]:
+    """Find running Codex or Claude CLI processes outside hub-managed tmux sessions."""
     # Step 1: Get PIDs of all tmux pane processes (these are managed by us)
     tmux_pids: set = set()
     try:
@@ -1085,7 +1599,7 @@ def discover_capturable_sessions() -> list:
         for line in out.strip().split("\n"):
             if line.strip().isdigit():
                 tmux_pids.add(int(line.strip()))
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         pass
 
     # Also collect all descendant PIDs of tmux panes
@@ -1111,7 +1625,7 @@ def discover_capturable_sessions() -> list:
                     if child not in tmux_tree_pids:
                         tmux_tree_pids.add(child)
                         queue.append(child)
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
             pass
 
     # Step 2: List all processes
@@ -1120,7 +1634,7 @@ def discover_capturable_sessions() -> list:
             ["ps", "-eo", "pid,ppid,tty,command"],
             text=True, stderr=subprocess.DEVNULL
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return []
 
     process_rows: dict[int, dict] = {}
@@ -1140,7 +1654,8 @@ def discover_capturable_sessions() -> list:
             "command": parts[3],
         }
 
-    capturable = []
+    selected_agent = _normalize_agent(agent) if agent else None
+    capturable: list[dict] = []
     for proc in process_rows.values():
         pid = proc["pid"]
         ppid = proc["ppid"]
@@ -1151,8 +1666,14 @@ def discover_capturable_sessions() -> list:
         if pid in tmux_tree_pids:
             continue
 
-        # Check if this is a Codex CLI process
-        if not _is_codex_cli_process(command):
+        process_agent = None
+        for candidate in AGENT_ORDER:
+            if _is_agent_cli_process(command, candidate):
+                process_agent = candidate
+                break
+        if not process_agent:
+            continue
+        if selected_agent and process_agent != selected_agent:
             continue
 
         # Get CWD
@@ -1177,11 +1698,14 @@ def discover_capturable_sessions() -> list:
                 project_name = workspace_name
 
         if not project_name:
-            project_name = _friendly_process_source(command)
+            project_name = _friendly_process_source(command, process_agent)
 
-        session_id = _find_latest_session_id(cwd)
+        session_id = _find_latest_session_id(cwd, process_agent)
 
         capturable.append({
+            "agent": process_agent,
+            "agent_label": _agent_spec(process_agent)["label"],
+            "product": _agent_spec(process_agent)["product"],
             "pid": pid,
             "tty": tty,
             "cwd": cwd,
@@ -1189,6 +1713,7 @@ def discover_capturable_sessions() -> list:
             "session_id": session_id,
         })
 
+    capturable.sort(key=lambda item: (AGENT_ORDER.index(item["agent"]), item["project_name"].lower(), item["pid"]))
     return capturable
 
 
@@ -1268,7 +1793,7 @@ def _ttyd_session_on_port(port: int) -> Optional[str]:
     return None
 
 
-def _start_ttyd(session: str, port: int) -> None:
+def _start_ttyd(session: str, port: int, agent: str = DEFAULT_AGENT) -> None:
     """Start a ttyd process attached to a tmux session if not already running."""
     if port_in_use(port):
         existing = _ttyd_session_on_port(port)
@@ -1283,8 +1808,11 @@ def _start_ttyd(session: str, port: int) -> None:
         TTYD_BIN, "-W", "-p", str(port),
         "--ping-interval", "5",
         "-t", f"fontSize={FONT_SIZE}",
-        "-t", 'theme={"background":"#0f0f1a","foreground":"#e8e8f0","cursor":"#10a37f"}',
-        "-t", "titleFixed=Codex Remote Hub",
+        "-t", (
+            '{"background":"#0f0f1a","foreground":"#e8e8f0",'
+            f'"cursor":"{_agent_spec(agent)["ttyd_cursor"]}"' + "}"
+        ),
+        "-t", f'titleFixed={_agent_spec(agent)["ttyd_title"]}',
     ]
     # Custom index file for virtual keyboard overlay
     custom_index = os.path.join(INSTALL_DIR, "ttyd-index.html")
@@ -1304,23 +1832,63 @@ def _start_ttyd(session: str, port: int) -> None:
     time.sleep(0.3)
 
 
-def start_session(name: str, directory: Optional[str] = None, skip_permissions: bool = False) -> int:
+def _ensure_agent_binary(agent: str) -> str:
+    """Return the executable path for an agent or raise if unavailable."""
+    binary = _agent_spec(agent)["bin"]
+    resolved = shutil.which(binary) if not os.path.isabs(binary) else binary
+    if not resolved or not os.access(resolved, os.X_OK):
+        raise RuntimeError(f'{_agent_spec(agent)["product"]} CLI is not installed or not executable')
+    return resolved
+
+
+def _ensure_unique_session_name(name: str, agent: str) -> str:
+    """Return a tmux-safe unique session display name for the selected agent."""
+    safe_agent = _normalize_agent(agent)
+    candidate = name
+    suffix = 1
+    while True:
+        session = _session_name(candidate, safe_agent)
+        r = subprocess.run([TMUX_BIN, "has-session", "-t", session], capture_output=True)
+        if r.returncode != 0:
+            return candidate
+        suffix += 1
+        candidate = f"{name}-{suffix}"
+
+
+def start_session(
+    name: str,
+    directory: Optional[str] = None,
+    skip_permissions: bool = False,
+    agent: str = DEFAULT_AGENT,
+    session_id: Optional[str] = None,
+) -> tuple[int, str]:
     """Start a tmux + ttyd session. Returns the assigned port."""
-    port = port_for_name(name)
-    session = _session_name(name)
+    safe_agent = _normalize_agent(agent)
+    binary = _ensure_agent_binary(safe_agent)
+    final_name = _ensure_unique_session_name(name, safe_agent) if session_id else name
+    port = port_for_name(final_name, safe_agent)
+    session = _session_name(final_name, safe_agent)
 
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
     if r.returncode != 0:
-        _ensure_dev_root_agents(directory)
+        if safe_agent == AGENT_CODEX:
+            _ensure_dev_root_agents(directory)
         cmd = [TMUX_BIN, "new-session", "-d", "-s", session]
         if directory and os.path.isdir(directory):
             cmd += ["-c", directory]
-        cmd.append(CODEX_BIN)
+        if safe_agent == AGENT_CLAUDE:
+            cmd.append(binary)
+            if session_id:
+                cmd += ["--resume", session_id, "--fork-session"]
+        else:
+            if session_id:
+                cmd += [binary, "fork", session_id]
+            else:
+                cmd.append(binary)
         if skip_permissions:
-            cmd.append("--dangerously-bypass-approvals-and-sandbox")
-        # Strip CODEX_HOME to prevent "cannot launch inside another session" error
-        clean_env = _session_env(name)
+            cmd.append(_agent_spec(safe_agent)["skip_flag"])
+        clean_env = _session_env(final_name, safe_agent)
         subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -1330,22 +1898,28 @@ def start_session(name: str, directory: Optional[str] = None, skip_permissions: 
         subprocess.run([TMUX_BIN, "set-option", "-t", session, "mouse", "on"],
                        capture_output=True)
 
-    _start_ttyd(session, port)
-    return port
+    _start_ttyd(session, port, safe_agent)
+    return port, final_name
 
 
-def capture_session(pid: int, session_id: Optional[str], cwd: str,
-                    name: str, skip_permissions: bool = False) -> tuple:
-    """Capture a running Codex CLI session into a tmux + ttyd session.
+def capture_session(
+    pid: int,
+    session_id: Optional[str],
+    cwd: str,
+    name: str,
+    skip_permissions: bool = False,
+    agent: str = DEFAULT_AGENT,
+) -> tuple[int, str]:
+    """Capture a running CLI session into a tmux + ttyd session."""
+    del pid
+    safe_agent = _normalize_agent(agent)
+    binary = _ensure_agent_binary(safe_agent)
 
-    Uses `codex fork <session_id>` to branch the conversation into a new tmux session.
-    Returns the assigned port.
-    """
     # Ensure unique session name
     base_name = name
     suffix = 1
     while True:
-        session = _session_name(name)
+        session = _session_name(name, safe_agent)
         r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                            capture_output=True)
         if r.returncode != 0:
@@ -1353,54 +1927,60 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
         suffix += 1
         name = f"{base_name}-{suffix}"
 
-    session = _session_name(name)
-    port = port_for_name(name)
-    _ensure_dev_root_agents(cwd)
+    session = _session_name(name, safe_agent)
+    port = port_for_name(name, safe_agent)
+    if safe_agent == AGENT_CODEX:
+        _ensure_dev_root_agents(cwd)
 
-    # Build the codex command with fork or resume --last
     cmd = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
     if cwd and os.path.isdir(cwd):
         cmd += ["-c", cwd]
 
-    if session_id:
-        cmd += [CODEX_BIN, "fork", session_id]
+    if safe_agent == AGENT_CLAUDE:
+        cmd.append(binary)
+        if session_id:
+            cmd += ["--resume", session_id, "--fork-session"]
+        else:
+            cmd.append("--continue")
     else:
-        cmd += [CODEX_BIN, "resume", "--last"]
+        if session_id:
+            cmd += [binary, "fork", session_id]
+        else:
+            cmd += [binary, "resume", "--last"]
     if skip_permissions:
-        cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        cmd.append(_agent_spec(safe_agent)["skip_flag"])
 
-    # Strip CODEX_HOME to prevent "cannot launch inside another session" error
-    clean_env = _session_env(name)
+    clean_env = _session_env(name, safe_agent)
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      env=clean_env)
     time.sleep(1.0)
 
-    # Verify the tmux session survived (codex might have failed and exited)
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
     if r.returncode != 0:
-        # fork/resume failed — try resume --last as fallback
         if session_id:
             cmd_fallback = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
             if cwd and os.path.isdir(cwd):
                 cmd_fallback += ["-c", cwd]
-            cmd_fallback += [CODEX_BIN, "resume", "--last"]
+            if safe_agent == AGENT_CLAUDE:
+                cmd_fallback += [binary, "--continue"]
+            else:
+                cmd_fallback += [binary, "resume", "--last"]
             if skip_permissions:
-                cmd_fallback.append("--dangerously-bypass-approvals-and-sandbox")
+                cmd_fallback.append(_agent_spec(safe_agent)["skip_flag"])
             subprocess.Popen(cmd_fallback, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, env=clean_env)
             time.sleep(1.0)
 
-    # Final check — if still no session, start fresh codex so ttyd has something to connect to
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
     if r.returncode != 0:
         fallback_cmd = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
         if cwd and os.path.isdir(cwd):
             fallback_cmd += ["-c", cwd]
-        fallback_cmd.append(CODEX_BIN)
+        fallback_cmd.append(binary)
         if skip_permissions:
-            fallback_cmd.append("--dangerously-bypass-approvals-and-sandbox")
+            fallback_cmd.append(_agent_spec(safe_agent)["skip_flag"])
         subprocess.Popen(fallback_cmd, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, env=clean_env)
         time.sleep(0.5)
@@ -1408,14 +1988,15 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
     subprocess.run([TMUX_BIN, "set-option", "-t", session, "mouse", "on"],
                    capture_output=True)
 
-    _start_ttyd(session, port)
+    _start_ttyd(session, port, safe_agent)
     return port, name
 
 
-def stop_session(name: str) -> None:
+def stop_session(name: str, agent: str = DEFAULT_AGENT) -> None:
     """Stop ttyd and kill the tmux session."""
-    port = port_for_name(name)
-    session = _session_name(name)
+    safe_agent = _normalize_agent(agent)
+    port = port_for_name(name, safe_agent)
+    session = _session_name(name, safe_agent)
 
     pkill = shutil.which("pkill")
     if pkill:
@@ -1449,22 +2030,24 @@ def render_hub(host: str) -> str:
     for s in sessions:
         status_class = "active" if s["has_ttyd"] else "idle"
         attached_badge = '<span class="badge active">connected</span>' if s["attached"] else ""
+        agent_badge = f'<span class="badge agent-badge">{s["agent_label"]}</span>'
         session_cards += f"""
         <div class="card">
-          <a href="/start/{s['name']}" class="card-link">
+          <a href="/start/{s['name']}?agent={s['agent']}" class="card-link">
             <div class="card-left">
               <span class="status-dot {status_class}"></span>
               <div>
                 <div class="card-name">{s['name']}</div>
-                <div class="card-meta">port {s['port']} &middot; {s['time']}</div>
+                <div class="card-meta">{s['agent_label']} &middot; port {s['port']} &middot; {s['time']}</div>
               </div>
             </div>
             <div class="card-right">
+              {agent_badge}
               {attached_badge}
               <span class="arrow">&rsaquo;</span>
             </div>
           </a>
-          <button class="stop-btn" onclick="event.preventDefault();if(confirm('Stop session {s['name']}?'))location='/stop/{s['name']}'">
+          <button class="stop-btn" onclick="event.preventDefault();if(confirm('Stop {s['agent_label']} session {s['name']}?'))location='/stop/{s['name']}?agent={s['agent']}'">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>
         </div>"""
@@ -1489,27 +2072,35 @@ def render_hub(host: str) -> str:
             .replace("{{VERSION}}", VERSION))
 
 
-def render_terminal(name: str, port: int, host: str) -> str:
+def render_terminal(name: str, port: int, host: str, agent: str = DEFAULT_AGENT) -> str:
     """Render the terminal wrapper page."""
     scheme = "https" if _has_ssl_certs() else "http"
     terminal_url = f"{scheme}://{host}:{port}"
     html = _load_template("terminal.html")
-    return html.replace("{{SESSION_NAME}}", name).replace("{{TERMINAL_URL}}", terminal_url)
+    safe_agent = _normalize_agent(agent)
+    return (html
+            .replace("{{SESSION_NAME}}", name)
+            .replace("{{SESSION_AGENT}}", safe_agent)
+            .replace("{{SESSION_PRODUCT}}", _agent_spec(safe_agent)["product"])
+            .replace("{{TERMINAL_URL}}", terminal_url))
 
 
-def render_mobile_terminal(name: str, port: int, host: str) -> str:
+def render_mobile_terminal(name: str, port: int, host: str, agent: str = DEFAULT_AGENT) -> str:
     """Render the mobile-first terminal shell for iPhone/iPad."""
     scheme = "https" if _has_ssl_certs() else "http"
     terminal_url = f"{scheme}://{host}:{port}"
     html = _load_template("mobile.html")
+    safe_agent = _normalize_agent(agent)
     return (html
             .replace("{{SESSION_NAME}}", name)
+            .replace("{{SESSION_AGENT}}", safe_agent)
+            .replace("{{SESSION_PRODUCT}}", _agent_spec(safe_agent)["product"])
             .replace("{{TERMINAL_URL}}", terminal_url))
 
 
-def get_pane_snapshot(name: str, lines: int = 160) -> dict:
+def get_pane_snapshot(name: str, lines: int = 160, agent: str = DEFAULT_AGENT) -> dict:
     """Return a plain-text snapshot of the tmux pane for mobile rendering."""
-    session = _session_name(name)
+    session = _session_name(name, agent)
     lines = max(40, min(lines, 400))
 
     has_session = subprocess.run(
@@ -1575,6 +2166,7 @@ class HubHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         qs = parse_qs(parsed.query)
+        agent = _normalize_agent(qs.get("agent", [DEFAULT_AGENT])[0])
 
         # Start session
         if path.startswith("/start/"):
@@ -1586,9 +2178,20 @@ class HubHandler(BaseHTTPRequestHandler):
                 return
             directory = qs.get("dir", [None])[0]
             skip_permissions = qs.get("skip_permissions", ["0"])[0] == "1"
-            start_session(name, directory, skip_permissions)
+            session_id = qs.get("session_id", [None])[0]
+            try:
+                _port, final_name = start_session(
+                    name,
+                    directory,
+                    skip_permissions,
+                    agent=agent,
+                    session_id=session_id,
+                )
+            except RuntimeError as err:
+                self.send_error(500, str(err))
+                return
             self.send_response(302)
-            self.send_header("Location", f"/terminal/{name}")
+            self.send_header("Location", f"/terminal/{final_name}?agent={agent}")
             self.end_headers()
             return
 
@@ -1600,9 +2203,9 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.send_header("Location", "/")
                 self.end_headers()
                 return
-            port = port_for_name(name)
+            port = port_for_name(name, agent)
             host = self.headers.get("Host", "localhost").split(":")[0]
-            html = render_terminal(name, port, host)
+            html = render_terminal(name, port, host, agent=agent)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
@@ -1618,9 +2221,9 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.send_header("Location", "/")
                 self.end_headers()
                 return
-            port = port_for_name(name)
+            port = port_for_name(name, agent)
             host = self.headers.get("Host", "localhost").split(":")[0]
-            html = render_mobile_terminal(name, port, host)
+            html = render_mobile_terminal(name, port, host, agent=agent)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
@@ -1631,7 +2234,7 @@ class HubHandler(BaseHTTPRequestHandler):
         # Stop session
         if path.startswith("/stop/"):
             name = path.split("/stop/")[1].strip("/")
-            stop_session(name)
+            stop_session(name, agent=agent)
             self.send_response(302)
             self.send_header("Location", "/")
             self.end_headers()
@@ -1639,7 +2242,7 @@ class HubHandler(BaseHTTPRequestHandler):
 
         # API: list sessions (JSON)
         if path == "/api/sessions":
-            sessions = get_sessions()
+            sessions = get_sessions(agent if "agent" in qs else None)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1649,7 +2252,7 @@ class HubHandler(BaseHTTPRequestHandler):
         # API: check if ttyd is ready
         if path.startswith("/api/ttyd-ready/"):
             name = path.split("/api/ttyd-ready/")[1].strip("/")
-            port = port_for_name(name)
+            port = port_for_name(name, agent)
             ready = port_in_use(port)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1665,7 +2268,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 lines = int(qs.get("lines", ["160"])[0])
             except (ValueError, IndexError):
                 lines = 160
-            data = get_pane_snapshot(name, lines)
+            data = get_pane_snapshot(name, lines, agent=agent)
             self.send_response(200 if data.get("ok") else 404)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-cache, no-store")
@@ -1680,7 +2283,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 return
             text = qs.get("text", [""])[0]
             try:
-                asset = _write_session_tts_asset(name, text)
+                asset = _write_session_tts_asset(name, text, agent=agent)
             except ValueError as err:
                 self._send_json({"error": str(err)}, 400)
                 return
@@ -1725,12 +2328,26 @@ class HubHandler(BaseHTTPRequestHandler):
 
         # API: list capturable sessions (JSON)
         if path == "/api/capturable":
-            sessions = discover_capturable_sessions()
+            sessions = discover_capturable_sessions(agent if "agent" in qs else None)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-cache, no-store")
             self.end_headers()
             self.wfile.write(json.dumps(sessions).encode())
+            return
+
+        if path == "/api/saved-threads":
+            if agent == AGENT_CLAUDE:
+                projects = _discover_saved_claude_projects()
+            elif agent == AGENT_CODEX:
+                projects = _discover_saved_codex_projects()
+            else:
+                projects = []
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.end_headers()
+            self.wfile.write(json.dumps({"projects": projects}).encode())
             return
 
         # API: list selectable macOS windows for screenshot capture
@@ -1743,7 +2360,7 @@ class HubHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"ok": True, "windows": windows}).encode())
             return
 
-        # Capture a running Codex CLI session
+        # Capture a running Codex or Claude CLI session
         if path == "/capture":
             try:
                 pid = int(qs.get("pid", [0])[0])
@@ -1769,9 +2386,15 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            port, final_name = capture_session(pid, session_id, cwd, name, skip_permissions)
+            try:
+                _port, final_name = capture_session(
+                    pid, session_id, cwd, name, skip_permissions, agent=agent
+                )
+            except RuntimeError as err:
+                self.send_error(500, str(err))
+                return
             self.send_response(302)
-            self.send_header("Location", f"/terminal/{final_name}")
+            self.send_header("Location", f"/terminal/{final_name}?agent={agent}")
             self.end_headers()
             return
 
@@ -1808,7 +2431,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.send_response(400)
                 self.end_headers()
                 return
-            assets = _list_session_assets(name)
+            assets = _list_session_assets(name, agent=agent)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-cache, no-store")
@@ -1824,7 +2447,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             name, filename = raw.split("/", 1)
-            asset_path, mime_type = _resolve_session_asset_file(name, filename)
+            asset_path, mime_type = _resolve_session_asset_file(name, filename, agent=agent)
             if not asset_path:
                 self.send_response(404)
                 self.end_headers()
@@ -1888,6 +2511,8 @@ class HubHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        qs = parse_qs(parsed.query)
+        agent = _normalize_agent(qs.get("agent", [DEFAULT_AGENT])[0])
 
         if path.startswith("/api/tts-file/"):
             name = path.split("/api/tts-file/")[1].strip("/")
@@ -1903,7 +2528,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                asset = _write_session_tts_asset(name, payload.get("text", ""))
+                asset = _write_session_tts_asset(name, payload.get("text", ""), agent=agent)
             except ValueError as err:
                 self._send_json({"error": str(err)}, 400)
                 return
@@ -1976,9 +2601,10 @@ class HubHandler(BaseHTTPRequestHandler):
                     screenshot = _take_session_window_screenshot(
                         name,
                         int(payload.get("window_id", 0)),
+                        agent=agent,
                     )
                 else:
-                    screenshot = _take_session_screenshot(name, requested_mode)
+                    screenshot = _take_session_screenshot(name, requested_mode, agent=agent)
             except ValueError:
                 self._send_json({"error": "invalid screenshot request"}, 400)
                 return
@@ -2006,7 +2632,7 @@ class HubHandler(BaseHTTPRequestHandler):
             if not uploads:
                 self._send_json({"error": "no images uploaded"}, 400)
                 return
-            saved = _store_uploaded_images(name, uploads)
+            saved = _store_uploaded_images(name, uploads, agent=agent)
             self._send_json({
                 "ok": True,
                 "saved": saved,
@@ -2017,7 +2643,7 @@ class HubHandler(BaseHTTPRequestHandler):
         # API: send special key via tmux
         if path.startswith("/api/send-keys/"):
             name = path.split("/api/send-keys/")[1].strip("/")
-            session = _session_name(name)
+            session = _session_name(name, agent)
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             data = json.loads(body)
@@ -2044,7 +2670,7 @@ class HubHandler(BaseHTTPRequestHandler):
         # API: send text (paste) via tmux
         if path.startswith("/api/send-text/"):
             name = path.split("/api/send-text/")[1].strip("/")
-            session = _session_name(name)
+            session = _session_name(name, agent)
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             data = json.loads(body)
@@ -2070,7 +2696,7 @@ class HubHandler(BaseHTTPRequestHandler):
         # API: scroll via tmux copy-mode
         if path.startswith("/api/scroll/"):
             name = path.split("/api/scroll/")[1].strip("/")
-            session = _session_name(name)
+            session = _session_name(name, agent)
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             data = json.loads(body)
@@ -2142,7 +2768,7 @@ def cmd_stop():
         print("  Codex Remote Hub is not running")
     pkill = shutil.which("pkill")
     if pkill:
-        subprocess.run([pkill, "-f", "ttyd.*-p 78"], capture_output=True)
+        subprocess.run([pkill, "-f", r"ttyd.*-p 7[89][0-9][0-9]"], capture_output=True)
 
 
 def cmd_status():
@@ -2153,7 +2779,10 @@ def cmd_status():
         if sessions:
             for s in sessions:
                 dot = "*" if s["has_ttyd"] else "o"
-                print(f"   [{dot}] {s['name']} (port {s['port']}, {s['time']})")
+                print(
+                    f"   [{dot}] {s['agent_label']} {s['name']} "
+                    f"(port {s['port']}, {s['time']})"
+                )
         else:
             print("   No active sessions")
     else:
