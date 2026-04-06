@@ -5,31 +5,40 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0a0a0f">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F7F3EE">
 <title>{{SESSION_NAME}} — Codex Remote Hub Mobile</title>
 <style>
+  /* ── Design tokens ── */
   :root {
-    --bg: #0a0a0f;
-    --surface: rgba(18, 19, 26, 0.96);
-    --surface-2: #11131b;
-    --surface-3: #171a24;
-    --border: #262936;
-    --text: #ece9e2;
-    --text-dim: #928f86;
-    --accent: #10a37f;
-    --accent-2: #13b48d;
-    --danger: #ef4444;
-    --success: #4ade80;
-    --shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
-    --radius: 18px;
-    --mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    --header-h: 58px;
-    --composer-h: 152px;
+    --bg: #F5F1EB;
+    --surface: #FFFFFF;
+    --surface-warm: #FDFBF8;
+    --surface-dim: #EDE8E1;
+    --border: #DDD6CB;
+    --border-light: #EAE4DC;
+    --text: #2D2926;
+    --text-secondary: #78716C;
+    --text-tertiary: #A8A29E;
+    --accent: #D97706;
+    --accent-soft: #FFF7ED;
+    --accent-hover: #B45309;
+    --danger: #DC2626;
+    --danger-soft: #FEF2F2;
+    --shadow-sm: 0 1px 3px rgba(45,41,38,0.06);
+    --shadow-md: 0 4px 16px rgba(45,41,38,0.08);
+    --shadow-lg: 0 8px 32px rgba(45,41,38,0.10);
+    --shadow-glow: 0 0 0 3px rgba(217,119,6,0.15);
+    --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+    --mono: 'SF Mono', ui-monospace, Menlo, monospace;
+    --header-h: 44px;
     --app-height: 100dvh;
-    --input-h: 40px;
-    --icon-btn-h: 45px;
+    --input-h: 44px;
+    --toolbar-icon-size: 30px;
+    --radius-full: 999px;
+    --radius-lg: 22px;
+    --radius-md: 14px;
+    --radius-sm: 10px;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -37,195 +46,143 @@
   html, body {
     background: var(--bg);
     color: var(--text);
-    min-height: 100%;
-    width: 100%;
-    max-width: 100%;
+    height: 100%; width: 100%; max-width: 100%;
     font-family: var(--sans);
     -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
     overscroll-behavior: none;
-    overflow-x: hidden;
+    overflow: hidden;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+  }
+  body { height: var(--app-height); }
+  a { color: inherit; }
+
+  /* ── Variant switcher (temporary for review) ── */
+  .variant-switcher {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; justify-content: center; gap: 0;
+    background: var(--text); padding: 2px;
+    padding-top: calc(env(safe-area-inset-top) + 2px);
+  }
+  .variant-switcher button {
+    flex: 1; border: 0; padding: 7px 0;
+    font: 600 12px/1 var(--sans); color: var(--text-tertiary);
+    background: transparent; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .variant-switcher button.active {
+    color: #fff; background: var(--accent); border-radius: 6px;
+  }
+  body.has-switcher .header {
+    margin-top: 28px;
   }
 
-  body {
+  /* ── App shell ── */
+  .app {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
     height: var(--app-height);
+    width: 100%; max-width: 100%;
+    display: flex; flex-direction: column;
+    background: var(--bg);
     overflow: hidden;
   }
 
-  a { color: inherit; }
-
-  .app {
-    height: var(--app-height);
-    width: 100%;
-    max-width: 100%;
-    display: flex;
-    flex-direction: column;
-    background:
-      radial-gradient(circle at top left, rgba(16, 163, 127, 0.08), transparent 28%),
-      radial-gradient(circle at top right, rgba(255, 255, 255, 0.03), transparent 22%),
-      var(--bg);
+  /* ── Header — slim status bar ── */
+  .header {
+    min-height: calc(var(--header-h) + env(safe-area-inset-top));
+    padding: calc(env(safe-area-inset-top) + 10px) 12px 10px;
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 0.5px solid rgba(45,41,38,0.08);
+    flex-shrink: 0;
+    z-index: 10;
   }
 
-  .header {
-    height: calc(var(--header-h) + env(safe-area-inset-top));
-    padding: calc(env(safe-area-inset-top) + 8px) 14px 10px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    background: linear-gradient(180deg, rgba(10, 10, 15, 0.98), rgba(10, 10, 15, 0.92));
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  .back-btn {
+    width: 32px; height: 32px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 0; background: transparent;
+    color: var(--accent); font-size: 22px; font-weight: 300;
+    text-decoration: none; border-radius: var(--radius-full);
+    -webkit-tap-highlight-color: transparent;
     flex-shrink: 0;
   }
 
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-  }
-
-  .back-btn,
-  .ghost-btn,
-  .chip-btn,
-  .send-btn,
-  .icon-btn {
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-    border-radius: 12px;
-    font: 600 14px/1 var(--sans);
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .back-btn,
-  .icon-btn {
-    width: 40px;
-    height: 40px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
-  }
-
-  .hot-mic-btn {
-    touch-action: manipulation;
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
-  }
-
-  .hot-mic-btn.hot-mic {
-    background: rgba(17, 19, 27, 0.96) !important;
-    border-color: rgba(239, 68, 68, 0.72) !important;
-    color: #ff4d4d !important;
-    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18), 0 0 18px rgba(239, 68, 68, 0.24);
-  }
-
-  .hot-mic-btn .btn-icon {
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.65;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-
-  .hot-mic-btn.hot-mic .btn-icon,
-  .hot-mic-btn.hot-mic .btn-icon path {
-    fill: none !important;
-    stroke: #ff4d4d !important;
-  }
-
-  .session-wrap {
-    min-width: 0;
-  }
+  .session-wrap { flex: 1; min-width: 0; }
 
   .session-top {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-    min-width: 0;
+    display: flex; align-items: baseline;
+    justify-content: space-between; gap: 8px; min-width: 0;
   }
 
   .session-name {
-    font: 700 16px/1.1 var(--mono);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font: 600 20px/1.2 var(--sans);
+    color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    letter-spacing: -0.02em;
   }
 
   .session-updated {
     flex-shrink: 0;
-    font: 600 11px/1 var(--sans);
-    color: var(--text-dim);
+    font: 500 11px/1 var(--sans);
+    color: var(--text-tertiary);
     white-space: nowrap;
   }
 
   .session-meta {
-    margin-top: 4px;
-    font: 500 12px/1.2 var(--sans);
-    color: var(--text-dim);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: clip;
+    margin-top: 1px;
+    font: 400 11px/1.2 var(--sans);
+    color: var(--text-tertiary);
+    white-space: nowrap; overflow: hidden; text-overflow: clip;
     text-align: right;
   }
 
   .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
   }
 
+  /* ── Main viewport ── */
   .main {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    padding: 12px 12px 0;
-    gap: 10px;
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    padding: 8px 10px 0;
     overflow: hidden;
+    transition: flex 0.35s ease;
   }
 
   .viewport {
-    flex: 1;
-    min-height: 0;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(10, 11, 16, 0.85);
-    border-radius: 22px;
-    box-shadow: var(--shadow);
+    flex: 1; min-height: 0;
+    border: 0.5px solid var(--border-light);
+    background: var(--surface-warm);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.9);
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
+    display: flex; flex-direction: column;
   }
 
   .pane-wrap {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
+    flex: 1; min-height: 0;
+    overflow-y: auto; overflow-x: hidden;
     padding: 14px;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: contain;
     overscroll-behavior-x: none;
     touch-action: pan-y;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+    scrollbar-color: rgba(45,41,38,0.12) transparent;
   }
-
-  .pane-wrap::-webkit-scrollbar {
-    width: 8px;
-  }
-
+  .pane-wrap::-webkit-scrollbar { width: 5px; }
   .pane-wrap::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
-    border-radius: 999px;
+    background: rgba(45,41,38,0.12); border-radius: var(--radius-full);
   }
 
   .pane {
-    font: 500 14px/1.5 var(--mono);
-    color: #eeece6;
+    font: 400 13.5px/1.65 var(--mono);
+    color: var(--text);
     min-height: min-content;
   }
 
@@ -234,527 +191,474 @@
     overflow-wrap: anywhere;
     word-break: break-word;
   }
-
-  .pane-block + .pane-block {
-    margin-top: 1em;
-  }
+  .pane-block + .pane-block { margin-top: 0.8em; }
 
   .pane-block.user {
-    color: #10a37f;
+    color: var(--accent);
+    border-left: 2.5px solid var(--accent);
+    padding-left: 10px;
+    margin-left: -2px;
+    background: linear-gradient(90deg, rgba(217,119,6,0.04), transparent 60%);
+    border-radius: 0 4px 4px 0;
   }
 
-  .pane-empty {
-    color: var(--text-dim);
-  }
+  .pane-empty { color: var(--text-tertiary); }
 
+  /* ── Composer shell ── */
   .composer-shell {
-    padding: 8px 12px calc(env(safe-area-inset-bottom) + 10px);
-    background: linear-gradient(180deg, rgba(10, 10, 15, 0), rgba(10, 10, 15, 0.86) 10%, rgba(10, 10, 15, 0.98) 30%);
+    padding: 4px 10px calc(env(safe-area-inset-bottom) + 4px);
     flex-shrink: 0;
-    width: 100%;
-    max-width: 100%;
-    overflow: hidden;
+    width: 100%; max-width: 100%; overflow: hidden;
+    transition: flex 0.35s ease;
   }
 
   .composer {
-    border: 1px solid rgba(255, 255, 255, 0.06);
     background: var(--surface);
-    border-radius: 22px;
-    box-shadow: var(--shadow);
-    padding: 9px;
-    display: grid;
-    gap: 8px;
-    width: 100%;
-    max-width: 100%;
-    overflow: hidden;
-    margin-top: 5px;
+    border: 0.5px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: 6px 8px;
+    display: grid; gap: 5px;
+    width: 100%; max-width: 100%; overflow: hidden;
   }
 
-  .tool-row,
-  .nav-row,
-  .input-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    min-width: 0;
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .input-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    min-width: 0;
-    gap: 0px;
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .input-stack {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .image-preview-strip {
-    display: none;
-    gap: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: 2px;
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-x;
-  }
-
-  .image-preview-strip.has-items {
-    display: flex;
-  }
-
-  .image-preview-card {
-    position: relative;
-    width: 76px;
-    height: 76px;
-    flex: 0 0 auto;
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: #0e1017;
-  }
-
-  .image-preview-thumb {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    background: #0e1017;
-  }
-
-  .image-preview-remove {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(10, 10, 15, 0.8);
-    color: #fff;
-    font: 700 12px/1 var(--sans);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .controls-shell {
-    display: grid;
-    gap: 4px;
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .controls-toggle-row {
-    display: flex;
-    align-items: center;
+  /* ── Toolbar strip — icon-only buttons ── */
+  .toolbar-strip {
+    display: flex; align-items: center;
     justify-content: space-between;
-    gap: 8px;
-  }
-
-  .controls-header-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-
-  .controls-toggle {
     padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--text-dim);
-    font: 700 11px/1 var(--mono);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 4px;
+  }
+
+  .toolbar-icon {
+    width: var(--toolbar-icon-size);
+    height: var(--toolbar-icon-size);
+    min-width: var(--toolbar-icon-size);
+    border: 0; border-radius: var(--radius-full);
+    background: var(--surface-dim);
+    color: var(--text-secondary);
+    display: inline-flex; align-items: center; justify-content: center;
     -webkit-tap-highlight-color: transparent;
-    margin-top: 5px;
-    margin-bottom: 5px;
-    margin-left: 5px;
+    transition: background 0.15s, color 0.15s;
+    padding: 0;
   }
-
-  .controls-upload-btn {
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
-    color: var(--text-dim);
-  }
-
-  .controls-toggle .chevron {
-    display: inline-block;
-    transition: transform 0.18s ease;
-    font: 700 11px/1 var(--mono);
-  }
-
-  .controls-shell.collapsed .controls-toggle .chevron {
-    transform: rotate(90deg);
-  }
-
-  .controls-shell.collapsed {
-    gap: 0;
-  }
-
-  .controls-body {
-    display: grid;
-    gap: 8px;
-    min-width: 0;
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .controls-shell.collapsed .controls-body {
-    display: none;
-  }
-
-  .tool-row,
-  .nav-row {
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-  }
-
-  .tool-row::-webkit-scrollbar,
-  .nav-row::-webkit-scrollbar {
-    display: none;
-  }
-
-  .chip-btn,
-  .ghost-btn {
-    height: 36px;
-    padding: 0 11px;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .ghost-btn {
-    background: rgba(255, 255, 255, 0.03);
-    color: var(--text-dim);
-  }
-
-  .danger-btn {
-    color: #ffd6d6;
-    border-color: rgba(239, 68, 68, 0.35);
-    background: rgba(239, 68, 68, 0.1);
-  }
-
-  .enter-btn,
-  .send-btn {
-    border-color: rgba(16, 163, 127, 0.45);
-    background: rgba(16, 163, 127, 0.18);
-    color: #dffff5;
-  }
-
-  .window-sheet {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    padding: 16px 12px calc(env(safe-area-inset-bottom) + 12px);
-    background: rgba(5, 6, 10, 0.72);
-    backdrop-filter: blur(8px);
-    overflow-y: auto;
-    overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-y: contain;
-    touch-action: pan-y;
-  }
-
-  .window-sheet.hidden {
-    display: none;
-  }
-
-  .window-sheet-card {
-    width: 100%;
-    max-width: 680px;
-    height: min(72vh, 640px);
-    max-height: min(72vh, 640px);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 22px;
-    background: rgba(18, 19, 26, 0.98);
-    box-shadow: var(--shadow);
-    padding: 14px;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .window-sheet-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .window-sheet-title {
-    font: 700 14px/1 var(--mono);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-  }
-
-  .window-sheet-close {
-    width: 34px;
-    height: 34px;
-    min-width: 34px;
-  }
-
-  .window-list {
-    display: grid;
-    gap: 8px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-height: 0;
-    flex: 1 1 auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-y: contain;
-    touch-action: pan-y;
-    padding-bottom: max(8px, env(safe-area-inset-bottom));
-  }
-
-  .window-list-empty {
-    padding: 18px 10px;
-    color: var(--text-dim);
-    font: 500 13px/1.4 var(--sans);
-    text-align: center;
-  }
-
-  .window-item {
-    width: 100%;
-    text-align: left;
-    display: grid;
-    gap: 4px;
-    padding: 11px 12px;
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    background: var(--surface-2);
+  .toolbar-icon:active {
+    background: var(--border);
     color: var(--text);
   }
-
-  .window-item-owner {
-    font: 700 13px/1.2 var(--sans);
+  .toolbar-icon svg {
+    width: 15px; height: 15px;
+    fill: none; stroke: currentColor;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
   }
 
-  .window-item-title {
-    font: 500 12px/1.35 var(--sans);
-    color: var(--text-dim);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .toolbar-sep {
+    width: 1px; height: 18px;
+    background: var(--border-light);
+    flex-shrink: 0; margin: 0 2px;
   }
 
-  .icon-action-btn {
-    width: var(--icon-btn-h);
-    height: var(--icon-btn-h);
-    min-width: var(--icon-btn-h);
-    padding: 0 !important;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
+  /* ── Input pill ── */
+  .input-row {
+    display: flex; gap: 6px; align-items: flex-end;
+    min-width: 0; width: 100%; max-width: 100%;
+  }
+  .input-stack {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+
+  .input-pill-wrap {
+    display: flex; align-items: flex-end; gap: 4px;
+    background: var(--surface-dim);
+    border: 1.5px solid var(--border);
+    border-radius: 16px;
+    padding: 3px 3px 3px 12px;
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+    position: relative;
+  }
+  .input-pill-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-glow);
+    background: var(--surface);
   }
 
   .composer-input {
-    flex: 1;
-    width: 100%;
-    min-width: 0;
-    min-height: var(--input-h);
-    max-height: 84px;
-    resize: none;
-    border: 1px solid rgba(255, 255, 255, 0.96);
-    background: #0e1017;
-    border-radius: 10px;
+    flex: 1; width: 100%; min-width: 0;
+    min-height: 32px; max-height: 84px;
+    resize: none; border: 0; background: transparent;
     color: var(--text);
-    padding: 10px 11px;
-    font: 500 16px/1.35 var(--sans);
+    padding: 7px 8px 7px 0;
+    font: 400 16px/1.4 var(--sans);
     outline: none;
-    transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    caret-color: var(--accent);
+    -webkit-appearance: none;
+    overflow: hidden;
   }
+  .composer-input::placeholder { color: var(--text-tertiary); }
 
-  .composer-input:focus {
-    border-color: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.96);
-  }
-
+  /* ── Send button ── */
   .send-btn {
-    height: var(--icon-btn-h);
-    min-width: var(--icon-btn-h);
+    width: 36px; height: 36px; min-width: 36px;
+    border: 0; border-radius: var(--radius-full);
+    background: var(--accent);
+    color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(217,119,6,0.3);
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, transform 0.1s;
+    flex-shrink: 0;
     padding: 0;
-    font-size: 13px;
+  }
+  .send-btn:active { background: var(--accent-hover); transform: scale(0.92); }
+  .send-btn .btn-icon {
+    width: 20px; height: 20px;
+    fill: none; stroke: currentColor;
+    stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;
   }
 
+  /* ── Hot mic button — base ── */
   .hot-mic-btn {
-    height: var(--icon-btn-h);
-    min-width: var(--icon-btn-h);
+    border: 0; border-radius: var(--radius-full);
+    background: var(--surface-dim);
+    color: var(--text-secondary);
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 8px;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: all 0.25s ease;
     padding: 0;
+    cursor: pointer;
+  }
+  .hot-mic-btn .btn-icon {
+    fill: none; stroke: currentColor;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    pointer-events: none;
+  }
+
+  .mic-label {
+    font: 600 14px/1 var(--sans);
+    letter-spacing: 0.02em;
+    pointer-events: none;
+  }
+
+  /* Hot mic ACTIVE state (all variants) */
+  .hot-mic-btn.hot-mic {
+    background: var(--danger) !important;
+    color: #fff !important;
+    border-color: var(--danger) !important;
+    box-shadow: 0 0 0 4px rgba(220,38,38,0.15), 0 4px 16px rgba(220,38,38,0.25) !important;
+    animation: mic-pulse 3s ease-in-out infinite;
+  }
+  .hot-mic-btn.hot-mic .btn-icon,
+  .hot-mic-btn.hot-mic .btn-icon path {
+    fill: none !important; stroke: #fff !important;
+  }
+
+  @keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(220,38,38,0.1), 0 0 10px rgba(220,38,38,0.15); }
+    50% { box-shadow: 0 0 0 8px rgba(220,38,38,0.06), 0 0 28px rgba(220,38,38,0.3); }
+  }
+
+  /* ── VARIANT A: Large hero mic button ── */
+  body.variant-a .hot-mic-btn {
+    width: 100%; height: 38px;
+    border: 1.5px solid var(--border);
     font-size: 13px;
   }
+  body.variant-a .hot-mic-btn .btn-icon { width: 20px; height: 20px; }
+  body.variant-a .mic-label { display: inline; }
+  body.variant-a .hot-mic-btn.hot-mic { border-color: var(--danger) !important; }
 
+  /* ── VARIANT B: Integrated inside input pill ── */
+  body.variant-b .mic-row { display: none; }
+  body.variant-b .hot-mic-btn {
+    width: 36px; height: 36px; min-width: 36px;
+    flex-shrink: 0;
+    border: 0;
+  }
+  body.variant-b .hot-mic-btn .btn-icon { width: 20px; height: 20px; }
+  body.variant-b .mic-label { display: none; }
+  body.variant-b .input-pill-wrap { padding-right: 4px; }
+  body.variant-b .input-pill-mic { display: flex; }
+
+  /* ── VARIANT C: Inline left of input ── */
+  body.variant-c .hot-mic-btn {
+    width: 44px; height: 44px; min-width: 44px;
+    border: 1.5px solid var(--border);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+    flex-shrink: 0;
+  }
+  body.variant-c .hot-mic-btn .btn-icon { width: 22px; height: 22px; }
+  body.variant-c .mic-label { display: none; }
+  body.variant-c .hot-mic-btn:active {
+    transform: scale(0.92);
+  }
+
+  /* Default: variant A visible, B hidden */
+  .input-pill-mic { display: none; }
+  .mic-row { display: flex; }
+
+  /* ── Swipe-up tray ── */
+  .controls-shell {
+    display: grid; gap: 0;
+    width: 100%; max-width: 100%;
+  }
+
+  .controls-toggle-row {
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .controls-header-actions { display: none; }
+
+  .controls-toggle {
+    padding: 2px 0; border: 0;
+    background: transparent;
+    color: var(--text-tertiary);
+    font: 500 14px/1 var(--sans);
+    display: inline-flex; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+    width: 44px;
+  }
+  .controls-toggle .chevron {
+    display: inline-block;
+    transition: transform 0.25s ease;
+    letter-spacing: 2px;
+  }
+
+  .controls-body {
+    display: grid; gap: 6px;
+    overflow: hidden;
+    max-height: 60px;
+    transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.3s ease;
+    opacity: 1;
+    padding-top: 6px;
+  }
+
+  .controls-shell.collapsed .controls-body {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+  }
+
+  .tray-grid {
+    display: flex; gap: 5px;
+    justify-content: center; flex-wrap: nowrap;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .tray-grid::-webkit-scrollbar { display: none; }
+
+  .tray-btn,
+  .chip-btn,
+  .ghost-btn {
+    height: 26px; padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface-dim);
+    color: var(--text-secondary);
+    font: 500 11px/1 var(--sans);
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .tray-btn:active, .chip-btn:active {
+    background: var(--border);
+  }
+
+  .tray-btn.danger-btn {
+    color: var(--danger);
+    border-color: rgba(220,38,38,0.25);
+    background: var(--danger-soft);
+  }
+
+  .enter-btn { display: none; }
+
+  /* ── Image previews ── */
+  .image-preview-strip {
+    display: none; gap: 8px;
+    flex-direction: column;
+    overflow-y: auto; overflow-x: hidden;
+    max-height: 180px;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch; touch-action: pan-y;
+  }
+  .image-preview-strip.has-items { display: flex; }
+
+  .image-preview-card {
+    position: relative; width: 100%; height: 140px;
+    flex: 0 0 140px; border-radius: var(--radius-md);
+    overflow: hidden; border: 1px solid var(--border);
+    background: var(--surface-dim);
+    align-self: stretch;
+  }
+  .image-preview-thumb {
+    display: block; width: 100%; height: 100%;
+    object-fit: cover; background: var(--surface-dim);
+  }
+  .image-preview-remove {
+    position: absolute; top: 4px; right: 4px;
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 0; background: rgba(45,41,38,0.7);
+    color: #fff; font: 700 11px/1 var(--sans);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+
+  /* ── Window picker sheet ── */
+  .window-sheet {
+    position: fixed; inset: 0; z-index: 40;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding: 16px 12px calc(env(safe-area-inset-bottom) + 12px);
+    background: rgba(45,41,38,0.25);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain; touch-action: pan-y;
+  }
+  .window-sheet.hidden { display: none; }
+
+  .window-sheet-card {
+    width: 100%; max-width: 680px;
+    height: min(72vh, 640px); max-height: min(72vh, 640px);
+    display: flex; flex-direction: column; gap: 10px;
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+    padding: 14px; min-height: 0; overflow: hidden;
+  }
+
+  .window-sheet-head {
+    display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
+  }
+  .window-sheet-title {
+    font: 600 14px/1 var(--sans);
+    letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+  .window-sheet-close {
+    width: 32px; height: 32px; min-width: 32px;
+    border: 0; border-radius: var(--radius-full);
+    background: var(--surface-dim); color: var(--text-secondary);
+    font: 500 16px/1 var(--sans);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+
+  .window-list {
+    display: grid; gap: 6px;
+    overflow-y: auto; overflow-x: hidden; min-height: 0; flex: 1 1 auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain; touch-action: pan-y;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+  .window-list-empty {
+    padding: 24px 10px; color: var(--text-tertiary);
+    font: 400 14px/1.5 var(--sans); text-align: center;
+  }
+  .window-item {
+    width: 100%; text-align: left;
+    display: grid; gap: 3px; padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-dim); color: var(--text);
+  }
+  .window-item-owner { font: 600 13px/1.2 var(--sans); }
+  .window-item-title {
+    font: 400 12px/1.35 var(--sans); color: var(--text-secondary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ── Icon sizing helper ── */
+  .icon-action-btn {
+    padding: 0 !important;
+  }
   .btn-icon {
-    width: 78%;
-    height: 78%;
-    display: block;
-    fill: currentColor;
-    opacity: 0.95;
-    pointer-events: none;
-    margin: 0;
+    display: block; pointer-events: none; margin: 0;
   }
 
-  .main {
-    padding: 8px 8px 0;
-    gap: 6px;
-  }
-
-  .viewport {
-    border-radius: 18px;
-  }
-
-  .pane-wrap {
-    padding: 10px;
-  }
-
-  .composer-shell {
-    padding: 0;
-  }
-
-  .composer {
-    margin: 5px 2px 0;
-    padding: 4px;
-    gap: 3px;
-    border-radius: 16px;
-  }
-
-  .input-row {
-    grid-template-columns: minmax(0, 1fr) 45px 45px;
-    gap: 2px;
-  }
-
-  body.input-focus .header,
-  body.hot-mic-compose .header,
+  /* ── 50/50 split: input-focus / hot-mic-compose ── */
   body.input-focus .main,
   body.hot-mic-compose .main {
-    display: none;
+    flex: 0 0 45%;
+    min-height: 0;
+    padding-bottom: 4px;
   }
 
   body.input-focus .composer-shell,
   body.hot-mic-compose .composer-shell {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    padding: calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px);
-    background:
-      linear-gradient(180deg, rgba(10, 10, 15, 0.98), rgba(10, 10, 15, 0.98)),
-      var(--bg);
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 0;
   }
 
   body.input-focus .composer,
   body.hot-mic-compose .composer {
-    margin: 0;
     height: 100%;
-    max-height: none;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 8px;
-  }
-
-  body.input-focus .controls-shell,
-  body.hot-mic-compose .controls-shell {
-    display: none;
+    display: flex; flex-direction: column;
+    gap: 6px;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    margin-bottom: 0;
   }
 
   body.input-focus .input-row,
   body.hot-mic-compose .input-row {
-    flex: 1;
-    min-height: 0;
-    align-items: stretch;
+    flex: 1; min-height: 0; align-items: stretch;
   }
 
   body.input-focus .input-stack,
   body.hot-mic-compose .input-stack {
-    flex: 1;
-    min-height: 0;
+    flex: 1; min-height: 0;
+  }
+
+  body.input-focus .input-pill-wrap,
+  body.hot-mic-compose .input-pill-wrap {
+    flex: 1; min-height: 0; align-items: stretch;
   }
 
   body.input-focus .composer-input,
   body.hot-mic-compose .composer-input {
-    flex: 1;
-    min-height: 0;
-    height: 100% !important;
-    max-height: none;
-    font-size: 16px;
-    line-height: 1.45;
-    padding: 14px 13px;
+    flex: 1; min-height: 0; height: 100% !important;
+    max-height: none; font-size: 16px; line-height: 1.5;
+    padding: 12px 8px 12px 0;
   }
 
-  body.keyboard-open .header {
-    display: none;
-  }
+  /* Keyboard open */
+  body.keyboard-open .session-meta { display: none; }
+  body.keyboard-open .main { padding-top: 4px; }
+  body.keyboard-open .pane-wrap { padding: 8px 10px; }
+  body.keyboard-open .composer-shell { padding-top: 0; padding-bottom: 0; }
 
-  body.keyboard-open .session-meta {
-    display: none;
-  }
+  .tablet-grid { display: contents; }
 
-  body.keyboard-open .main {
-    padding-top: 4px;
-  }
-
-  body.keyboard-open .pane-wrap {
-    padding: 8px 10px;
-  }
-
-  body.keyboard-open .controls-shell {
-    display: none;
-  }
-
-  body.keyboard-open .controls-body {
-    display: none;
-  }
-
-  body.keyboard-open .composer-shell {
-    padding: 0;
-  }
-
-  .tablet-grid {
-    display: contents;
-  }
-
+  /* ── Variant B: also show mic in input-focus ── */
+  body.variant-b.input-focus .input-pill-mic,
+  body.variant-b.hot-mic-compose .input-pill-mic { display: flex; }
 </style>
 </head>
-<body>
+<body class="variant-c">
+
   <div class="app">
+    <!-- ── Header ── -->
     <header class="header">
-      <div class="header-left">
-        <a class="back-btn" href="/" aria-label="Back to sessions">&#8249;</a>
-        <div class="session-wrap">
-          <div class="session-top">
-            <div class="session-name">{{SESSION_NAME}}</div>
-            <div class="session-updated" id="status-text">--:--:--</div>
-          </div>
-          <div class="session-meta" id="cwd-label">Connecting…</div>
+      <a class="back-btn" href="/" aria-label="Back to sessions">
+        <svg width="10" height="18" viewBox="0 0 10 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1L1 9l8 8"/></svg>
+      </a>
+      <div class="session-wrap">
+        <div class="session-top">
+          <div class="session-name">{{SESSION_NAME}}</div>
+          <div class="session-updated" id="status-text">--:--:--</div>
         </div>
+        <div class="session-meta" id="cwd-label">Connecting…</div>
       </div>
     </header>
 
+    <!-- ── Viewport ── -->
     <main class="main">
       <section class="viewport">
         <div class="pane-wrap" id="pane-wrap">
@@ -763,74 +667,101 @@
       </section>
     </main>
 
+    <!-- ── Composer ── -->
     <div class="composer-shell">
       <section class="composer">
-        <div class="controls-shell" id="controls-shell">
+
+        <!-- Hidden controls (preserved for JS bindings) -->
+        <div class="controls-shell collapsed" id="controls-shell" style="display:none">
           <div class="controls-toggle-row">
-            <button type="button" class="controls-toggle" id="controls-toggle" aria-expanded="true" aria-label="Collapse controls">
-              <span>Controls</span>
-              <span class="chevron">⌃</span>
+            <button type="button" class="controls-toggle" id="controls-toggle" aria-expanded="false">
+              <span class="chevron">···</span>
             </button>
-            <div class="controls-header-actions">
-              <button id="tts-test-btn" class="ghost-btn chip-btn" type="button" aria-label="Test voice">
-                Voice
-              </button>
-              <button id="image-btn" class="ghost-btn icon-action-btn controls-upload-btn" type="button" aria-label="Upload image">
-                <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M20 5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3l1.4-1.5A2 2 0 0 1 9.86 3h4.28a2 2 0 0 1 1.46.5L17 5h3Zm-8 3.25A4.75 4.75 0 1 0 16.75 13 4.76 4.76 0 0 0 12 8.25Zm0 1.5A3.25 3.25 0 1 1 8.75 13 3.25 3.25 0 0 1 12 9.75Z"/>
-                </svg>
-              </button>
-            </div>
           </div>
           <div class="controls-body">
-        <div class="tool-row">
-          <button class="chip-btn" data-key="Escape">Esc</button>
-          <button class="chip-btn" data-key="Tab">Tab</button>
-          <button class="chip-btn danger-btn" data-key="C-c">^C</button>
-          <button class="chip-btn" data-action="paste">Paste</button>
-              <button class="chip-btn enter-btn" data-key="Enter">Enter</button>
-              <button class="chip-btn" data-scroll="end">PgEnd</button>
-            </div>
-
-            <div class="nav-row">
-              <button class="chip-btn" data-shot="screen">Desk</button>
-              <button class="chip-btn" data-shot="window">Window</button>
-              <button class="chip-btn" data-scroll="up">PgUp</button>
-              <button class="chip-btn" data-scroll="down">PgDn</button>
-            </div>
+            <button class="tray-btn" data-key="C-c" style="display:none">^C</button>
+            <button class="tray-btn" data-key="Tab" style="display:none">Tab</button>
+            <button class="tray-btn" data-key="Enter" style="display:none">Enter</button>
+          </div>
+          <div class="controls-header-actions">
+            <button id="image-btn-legacy" class="ghost-btn icon-action-btn" type="button" style="display:none"></button>
           </div>
         </div>
 
+        <!-- Unified icon toolbar — single row -->
+        <div class="toolbar-strip">
+          <button id="image-btn" class="toolbar-icon" type="button" aria-label="Upload photo">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/><path d="M21 15l-5-5L5 21"/></svg>
+          </button>
+          <button class="toolbar-icon" data-shot="screen" type="button" aria-label="Desktop screenshot">
+            <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+          </button>
+          <button class="toolbar-icon" data-shot="window" type="button" aria-label="Window screenshot">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><circle cx="6.5" cy="6" r="0.8" fill="currentColor" stroke="none"/><circle cx="9" cy="6" r="0.8" fill="currentColor" stroke="none"/><circle cx="11.5" cy="6" r="0.8" fill="currentColor" stroke="none"/></svg>
+          </button>
+          <button class="toolbar-icon" data-action="paste" type="button" aria-label="Paste">
+            <svg viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+          </button>
+          <button class="toolbar-icon" data-key="Escape" type="button" aria-label="Escape">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/></svg>
+          </button>
+          <button class="toolbar-icon" data-scroll="up" type="button" aria-label="Page up">
+            <svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+          </button>
+          <button class="toolbar-icon" data-scroll="down" type="button" aria-label="Page down">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
+          </button>
+          <button class="toolbar-icon" data-scroll="end" type="button" aria-label="Scroll to end">
+            <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" fill="none"/><path d="M10 12l6 6"/><path d="M16 15v3h-3"/></svg>
+          </button>
+        </div>
+
+        <!-- Input row with mic on left -->
         <div class="input-row">
-          <div class="input-stack">
-            <div id="image-preview-strip" class="image-preview-strip" aria-live="polite"></div>
-            <textarea id="composer-input" class="composer-input" rows="1" aria-label="Send text to Codex"></textarea>
-          </div>
-          <button id="hot-mic-btn" class="ghost-btn hot-mic-btn icon-action-btn" type="button" aria-label="Start hot mic" title="Hot mic">
-            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <button id="hot-mic-btn" class="hot-mic-btn icon-action-btn" type="button" aria-label="Start hot mic" title="Hot mic">
+            <svg class="btn-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3.75a2.25 2.25 0 0 1 2.25 2.25v6.75a2.25 2.25 0 0 1-4.5 0V6A2.25 2.25 0 0 1 12 3.75Z"></path>
               <path d="M18 10.5v1.5a6 6 0 0 1-12 0v-1.5"></path>
               <path d="M12 18v2.25"></path>
               <path d="M9.75 20.25h4.5"></path>
             </svg>
           </button>
-          <button id="send-btn" class="send-btn icon-action-btn" type="button" aria-label="Send">
-            <svg class="btn-icon" viewBox="0 0 2.271 2.271" aria-hidden="true">
-              <path d="M2.271,1.135c0,0.626 -0.509,1.135 -1.136,1.135c-0.626,-0 -1.135,-0.509 -1.135,-1.135c0,-0.626 0.509,-1.135 1.135,-1.135c0.627,0 1.136,0.509 1.136,1.135Zm-0.731,-0.595l-1.072,0.412c-0.055,0.02 -0.1,0.055 -0.1,0.105c0,0.064 0.047,0.085 0.112,0.103l0.32,0.097c0.047,0.014 0.069,0.016 0.099,-0.012l0.694,-0.647c0.01,-0.009 0.02,-0.006 0.027,-0c0.008,0.007 0.008,0.017 -0,0.026l-0.643,0.698c-0.026,0.029 -0.028,0.05 -0.015,0.1l0.093,0.308c0.021,0.067 0.04,0.119 0.105,0.119c0.049,0 0.085,-0.042 0.11,-0.107l0.408,-1.066c0.011,-0.032 0.018,-0.059 0.018,-0.084c-0,-0.044 -0.027,-0.07 -0.072,-0.07c-0.024,-0 -0.05,0.007 -0.084,0.018Z"/>
-            </svg>
-          </button>
+          <div class="input-stack">
+            <div id="image-preview-strip" class="image-preview-strip" aria-live="polite"></div>
+            <div class="input-pill-wrap">
+              <textarea id="composer-input" class="composer-input" rows="1" aria-label="Send text to Codex" placeholder="Message..."></textarea>
+              <!-- Variant B: mic inside pill (hidden) -->
+              <div class="input-pill-mic">
+                <button class="hot-mic-btn variant-b-mic" type="button" aria-label="Hot mic" style="width:36px;height:36px;min-width:36px;">
+                  <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 3.75a2.25 2.25 0 0 1 2.25 2.25v6.75a2.25 2.25 0 0 1-4.5 0V6A2.25 2.25 0 0 1 12 3.75Z"></path>
+                    <path d="M18 10.5v1.5a6 6 0 0 1-12 0v-1.5"></path>
+                    <path d="M12 18v2.25"></path>
+                    <path d="M9.75 20.25h4.5"></path>
+                  </svg>
+                </button>
+              </div>
+              <button id="send-btn" class="send-btn" type="button" aria-label="Send">
+                <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 19V5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+                  <path d="M5 12l7-7 7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
+
         <input id="image-input" type="file" accept="image/*" multiple hidden>
-        <audio id="reply-audio" playsinline preload="auto" hidden></audio>
       </section>
     </div>
   </div>
 
+  <!-- Window picker sheet -->
   <div class="window-sheet hidden" id="window-sheet" aria-hidden="true">
     <div class="window-sheet-card">
       <div class="window-sheet-head">
         <div class="window-sheet-title">Select Window</div>
-        <button id="window-sheet-close" class="ghost-btn window-sheet-close" type="button" aria-label="Close window picker">✕</button>
+        <button id="window-sheet-close" class="window-sheet-close" type="button" aria-label="Close window picker">✕</button>
       </div>
       <div class="window-list" id="window-list">
         <div class="window-list-empty">Loading windows…</div>
@@ -847,7 +778,6 @@
   var imageBtn = document.getElementById('image-btn');
   var imageInput = document.getElementById('image-input');
   var hotMicBtn = document.getElementById('hot-mic-btn');
-  var ttsTestBtn = document.getElementById('tts-test-btn');
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
   var composerShell = document.querySelector('.composer-shell');
@@ -857,7 +787,6 @@
   var windowSheet = document.getElementById('window-sheet');
   var windowList = document.getElementById('window-list');
   var windowSheetClose = document.getElementById('window-sheet-close');
-  var replyAudio = document.getElementById('reply-audio');
   var lastText = "";
   var lastCursorY = null;
   var pollTimer = null;
@@ -896,7 +825,6 @@
   var bargeInNoiseFloor = 0.008;
   var bargeInVoiceFrames = 0;
   var lastMicActivationAt = 0;
-  var statusResetTimer = null;
   var HOT_MIC_SILENCE_DELAY = 3000;
   var SPEECH_FOLLOWUP_DELAY = 900;
   var BARGE_IN_MONITOR_DELAY = 180;
@@ -941,6 +869,9 @@
     if (composerShell) {
       document.documentElement.style.setProperty('--composer-h', composerShell.offsetHeight + 'px');
     }
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
   }
 
   function autoResize() {
@@ -975,46 +906,6 @@
     if (window.console && message) {
       console.debug(message);
     }
-    if (!statusText || !message) return;
-    clearTimeout(statusResetTimer);
-    statusText.textContent = message;
-    statusResetTimer = setTimeout(function() {
-      setUpdatedTime(Date.now());
-    }, 2400);
-  }
-
-  function debugSpeech(message) {
-    if (window.console && message) {
-      console.debug('[tts]', message);
-    }
-    showStatus(message);
-  }
-
-  function describeSpeechError(err) {
-    if (!err) return 'unknown error';
-    if (typeof err === 'string') return err;
-    if (err.name && err.message) return err.name + ': ' + err.message;
-    if (err.message) return err.message;
-    if (err.name) return err.name;
-    return String(err);
-  }
-
-  function refreshSpeechVoice() {
-    if (!('speechSynthesis' in window)) return;
-    var voices = window.speechSynthesis.getVoices();
-    if (!voices || !voices.length) {
-      speechVoice = null;
-      return;
-    }
-
-    var language = (navigator.language || 'en-US').toLowerCase();
-    speechVoice = voices.find(function(voice) {
-      return (voice.lang || '').toLowerCase() === language;
-    }) || voices.find(function(voice) {
-      return language.indexOf((voice.lang || '').toLowerCase().split('-')[0]) === 0;
-    }) || voices.find(function(voice) {
-      return voice.default;
-    }) || voices[0];
   }
 
   function stripAnsi(text) {
@@ -1158,113 +1049,6 @@
     return false;
   }
 
-  function isToolSpeechBlock(block) {
-    var trimmed = (block || '').trim();
-    if (!trimmed) return false;
-
-    if (/^::[a-z0-9-]+\{/i.test(trimmed)) {
-      return true;
-    }
-    if (/^(?:Ran|Edited|Explored|Read|Searched|Compared|Applied|Updated|Created|Deleted|Moved)\b/.test(trimmed)) {
-      return true;
-    }
-    if (/^(?:Command:|Output:|Exit code:|Wall time:|Original token count:|Chunk ID:)/.test(trimmed)) {
-      return true;
-    }
-    if (/^[+|-]{3}(?:\s|$)|^@@/.test(trimmed)) {
-      return true;
-    }
-    if (/^[|└├╭╰│]/.test(trimmed)) {
-      return true;
-    }
-
-    var normalized = normalizeSpeechText(trimmed);
-    if (!normalized) return false;
-    if (/^git-(?:stage|commit|push|create-branch|create-pr)\b/i.test(normalized)) {
-      return true;
-    }
-    if (/^(?:mobile script syntax ok|installed template matches repo)\b/i.test(normalized)) {
-      return true;
-    }
-    return false;
-  }
-
-  function isSpeakableSpeechBlock(block, normalizedSubmitted) {
-    if (!block) return false;
-    if (isUserSpeechBlock(block) || isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
-      return false;
-    }
-    if (isFooterSpeechBlock(block) || isProgressSpeechBlock(block) || isToolSpeechBlock(block)) {
-      return false;
-    }
-
-    var text = normalizeSpeechText(block).replace(/^[\s:;,.!?\-•]+/, '').trim();
-    if (!text) return false;
-    if (normalizedSubmitted) {
-      if (text === normalizedSubmitted ||
-          text.indexOf(normalizedSubmitted) >= 0 ||
-          normalizedSubmitted.indexOf(text) >= 0) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  function extractSpeechReplyFromDeltaBlocks(blocks, normalizedSubmitted) {
-    if (!blocks || !blocks.length) {
-      return { text: '' };
-    }
-
-    var collected = blocks.filter(function(block) {
-      return isSpeakableSpeechBlock(block, normalizedSubmitted);
-    });
-    if (!collected.length) {
-      return { text: '' };
-    }
-
-    return {
-      text: normalizeSpeechText(collected.join('\n\n')).replace(/^[\s:;,.!?\-•]+/, '').trim()
-    };
-  }
-
-  function extractSpeechReplyFromDeltaLines(deltaText, normalizedSubmitted) {
-    var lines = sanitizeForSpeech(deltaText || '')
-      .split('\n')
-      .map(function(line) { return (line || '').trim(); })
-      .filter(Boolean);
-    if (!lines.length) {
-      return { text: '' };
-    }
-
-    var collected = lines.filter(function(line) {
-      if (!line) return false;
-      if (isUserSpeechBlock(line) || isImageSpeechBlock(line) || isDividerSpeechBlock(line)) {
-        return false;
-      }
-      if (isFooterSpeechBlock(line) || isProgressSpeechBlock(line) || isToolSpeechBlock(line)) {
-        return false;
-      }
-      var text = normalizeSpeechText(line).replace(/^[\s:;,.!?\-•]+/, '').trim();
-      if (!text) return false;
-      if (normalizedSubmitted) {
-        if (text === normalizedSubmitted ||
-            text.indexOf(normalizedSubmitted) >= 0 ||
-            normalizedSubmitted.indexOf(text) >= 0) {
-          return false;
-        }
-      }
-      return true;
-    });
-
-    if (!collected.length) {
-      return { text: '' };
-    }
-
-    return {
-      text: normalizeSpeechText(collected.join(' ')).replace(/^[\s:;,.!?\-•]+/, '').trim()
-    };
-  }
-
   function extractSpeechReplyFromBlocks(blocks, userIndex) {
     if (userIndex < 0 || !blocks.length) {
       return { text: '' };
@@ -1276,7 +1060,7 @@
       if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
         break;
       }
-      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block) || isToolSpeechBlock(block)) {
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
         continue;
       }
       segment.push(block);
@@ -1315,7 +1099,7 @@
       if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
         continue;
       }
-      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block) || isToolSpeechBlock(block)) {
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
         continue;
       }
       if (isProgressSpeechBlock(block)) {
@@ -1377,19 +1161,11 @@
         if (shortReply.text) {
           return shortReply;
         }
-        deltaUserIndex = findMatchingUserBlockIndex(deltaBlocks, '', true);
+        deltaUserIndex = findMatchingUserBlockIndex(deltaBlocks, '', false);
       }
       var deltaReply = extractSpeechReplyFromBlocks(deltaBlocks, deltaUserIndex);
       if (deltaReply.text) {
         return deltaReply;
-      }
-      var deltaLineReply = extractSpeechReplyFromDeltaLines(deltaText, normalizedSubmitted);
-      if (deltaLineReply.text) {
-        return deltaLineReply;
-      }
-      var deltaFallbackReply = extractSpeechReplyFromDeltaBlocks(deltaBlocks, normalizedSubmitted);
-      if (deltaFallbackReply.text) {
-        return deltaFallbackReply;
       }
     }
 
@@ -1403,10 +1179,7 @@
     userIndex = findMatchingUserBlockIndex(blocks, normalizedSubmitted, true);
 
     if (userIndex < 0) {
-      userIndex = findMatchingUserBlockIndex(blocks, '', true);
-      if (userIndex < 0) {
-        return { text: '' };
-      }
+      return { text: '' };
     }
 
     return extractSpeechReplyFromBlocks(blocks, userIndex);
@@ -1619,16 +1392,16 @@
   function refreshMicButtonState() {
     if (!hotMicBtn) return;
     hotMicBtn.classList.toggle('hot-mic', hotMicEnabled);
-    hotMicBtn.style.background = hotMicEnabled ? 'rgba(17, 19, 27, 0.96)' : '';
-    hotMicBtn.style.borderColor = hotMicEnabled ? 'rgba(239, 68, 68, 0.72)' : '';
-    hotMicBtn.style.color = hotMicEnabled ? '#ff4d4d' : '';
+    hotMicBtn.style.background = hotMicEnabled ? '#FEF2F2' : '';
+    hotMicBtn.style.borderColor = hotMicEnabled ? 'rgba(220, 38, 38, 0.5)' : '';
+    hotMicBtn.style.color = hotMicEnabled ? '#DC2626' : '';
     hotMicBtn.style.boxShadow = hotMicEnabled
-      ? '0 0 0 1px rgba(239, 68, 68, 0.18), 0 0 18px rgba(239, 68, 68, 0.24)'
+      ? '0 0 0 2px rgba(220, 38, 38, 0.12), 0 0 16px rgba(220, 38, 38, 0.15)'
       : '';
     var micIcon = hotMicBtn.querySelector('.btn-icon');
     if (micIcon) {
       micIcon.style.fill = 'none';
-      micIcon.style.stroke = hotMicEnabled ? '#ff4d4d' : '';
+      micIcon.style.stroke = hotMicEnabled ? '#DC2626' : '';
     }
     hotMicBtn.setAttribute(
       'aria-label',
@@ -1698,98 +1471,54 @@
     speechQueue = [];
     speechPlaybackActive = false;
     speechPlaybackToken += 1;
-    if (replyAudio) {
-      replyAudio.onended = null;
-      replyAudio.onerror = null;
-      try {
-        replyAudio.pause();
-      } catch (err) {}
-      try {
-        replyAudio.currentTime = 0;
-      } catch (err) {}
-      try {
-        replyAudio.removeAttribute('src');
-        replyAudio.load();
-      } catch (err) {}
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
   }
 
-  function primeSpeechSynthesis() {
-    if (speechPrimed) return;
-    if (!replyAudio) return;
-    replyAudio.setAttribute('playsinline', '');
-    replyAudio.setAttribute('preload', 'auto');
-    replyAudio.playsInline = true;
-    speechPrimed = true;
-  }
-
-  async function requestServerSpeechAsset(text) {
-    var res = await fetch('/api/tts-file/' + encodeURIComponent(SESSION), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text })
-    });
-
-    var payload = {};
-    try {
-      payload = await res.json();
-    } catch (err) {}
-
-    if (!res.ok) {
-      throw new Error(payload && payload.error ? payload.error : ('HTTP ' + res.status));
-    }
-    if (!payload || !payload.url) {
-      throw new Error('Speech audio URL missing');
-    }
-    return payload;
-  }
-
-  function startServerSpeechPlayback(url, activeToken, options) {
-    var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
-    if (!replyAudio) {
-      debugSpeech('Audio element unavailable');
-      speechPlaybackActive = false;
-      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+  function refreshSpeechVoice() {
+    if (!('speechSynthesis' in window)) return;
+    var voices = window.speechSynthesis.getVoices();
+    if (!voices || !voices.length) {
+      speechVoice = null;
       return;
     }
 
-    var settled = false;
-    function finish(message, isError) {
-      if (settled || activeToken !== speechPlaybackToken) return;
-      settled = true;
-      replyAudio.onended = null;
-      replyAudio.onerror = null;
-      debugSpeech(message);
-      speechPlaybackActive = false;
-      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
-    }
+    var language = (navigator.language || 'en-US').toLowerCase();
+    speechVoice = voices.find(function(voice) {
+      return (voice.lang || '').toLowerCase() === language;
+    }) || voices.find(function(voice) {
+      return language.indexOf((voice.lang || '').toLowerCase().split('-')[0]) === 0;
+    }) || voices.find(function(voice) {
+      return voice.default;
+    }) || voices[0];
+  }
 
-    var playbackUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now();
-    replyAudio.onended = function() {
-      finish('Voice playback ended', false);
-    };
-    replyAudio.onerror = function() {
-      finish('Voice playback error: audio element error', true);
-    };
-
+  function primeSpeechSynthesis() {
+    if (!('speechSynthesis' in window) || speechPrimed) return;
     try {
-      replyAudio.src = playbackUrl;
-      replyAudio.load();
-      var playPromise = replyAudio.play();
-      debugSpeech('Voice playback started');
-      if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(function(err) {
-          finish('Voice play blocked: ' + describeSpeechError(err), true);
-        });
+      refreshSpeechVoice();
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+      var utterance = new SpeechSynthesisUtterance(' ');
+      utterance.volume = 0;
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      if (speechVoice) {
+        utterance.voice = speechVoice;
       }
+      speechPrimed = true;
+      window.speechSynthesis.speak(utterance);
+      window.setTimeout(function() {
+        window.speechSynthesis.cancel();
+      }, 0);
     } catch (err) {
-      finish('Voice play blocked: ' + describeSpeechError(err), true);
+      speechPrimed = false;
     }
   }
 
-  async function playNextSpeechChunk(options) {
-    var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
-    if (!hotMicEnabled && !allowWithoutHotMic) {
+  function playNextSpeechChunk() {
+    if (!hotMicEnabled) {
       stopSpeechPlayback();
       return;
     }
@@ -1807,39 +1536,34 @@
     speechPlaybackActive = true;
     pauseRecognitionForSpeech();
     var activeToken = speechPlaybackToken;
-    var text = speechQueue.shift();
-    if (!text) {
-      speechPlaybackActive = false;
-      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
-      return;
+    var utterance = new SpeechSynthesisUtterance(speechQueue.shift());
+    utterance.lang = navigator.language || 'en-US';
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    if (speechVoice) {
+      utterance.voice = speechVoice;
     }
-
-    try {
-      debugSpeech('Generating voice audio');
-      var asset = await requestServerSpeechAsset(text);
-      if (activeToken !== speechPlaybackToken) return;
-      debugSpeech('Voice audio received');
-      startServerSpeechPlayback(asset.url, activeToken, {
-        allowWithoutHotMic: allowWithoutHotMic
-      });
-    } catch (err) {
-      if (activeToken !== speechPlaybackToken) return;
-      debugSpeech('Voice playback error: ' + describeSpeechError(err));
+    utterance.onend = function() {
+      if (activeToken !== speechPlaybackToken) {
+        return;
+      }
       speechPlaybackActive = false;
-      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
-    }
-  }
+      playNextSpeechChunk();
+    };
+    utterance.onerror = function() {
+      if (activeToken !== speechPlaybackToken) {
+        return;
+      }
+      speechPlaybackActive = false;
+      playNextSpeechChunk();
+    };
 
-  function playVoiceTest() {
-    primeSpeechSynthesis();
-    stopSpeechPlayback();
-    speechQueue = ['hello this is an audio test'];
-    speechPlaybackActive = false;
-    playNextSpeechChunk({ allowWithoutHotMic: true });
+    window.speechSynthesis.speak(utterance);
   }
 
   function speakText(text) {
-    if (!text) return;
+    if (!text || !('speechSynthesis' in window)) return;
 
     var chunks = splitForSpeech(text);
     if (!chunks.length) return;
@@ -1901,7 +1625,7 @@
   }
 
   function scheduleSpeechFromPane(nextText) {
-    if (!hotMicEnabled || !speechAwaitingReply) return;
+    if (!hotMicEnabled || !speechAwaitingReply || !('speechSynthesis' in window)) return;
     speechReplyLatestText = nextText || '';
     speakPendingReplyDelta();
   }
@@ -2537,6 +2261,22 @@
     };
   }
 
+  // Prevent toolbar taps from collapsing the expanded composer
+  var toolbarStrip = document.querySelector('.toolbar-strip');
+  if (toolbarStrip) {
+    toolbarStrip.addEventListener('touchstart', function() {
+      if (document.body.classList.contains('input-focus')) {
+        suppressBlurCollapse = true;
+      }
+    }, { passive: true });
+    toolbarStrip.addEventListener('mousedown', function(e) {
+      if (document.body.classList.contains('input-focus')) {
+        suppressBlurCollapse = true;
+        e.preventDefault();
+      }
+    });
+  }
+
   document.querySelectorAll('[data-key]').forEach(function(btn) {
     btn.addEventListener('click', function() {
       sendKey(btn.getAttribute('data-key'));
@@ -2578,9 +2318,9 @@
       setControlsCollapsed(!controlsShell.classList.contains('collapsed'));
     });
     try {
-      setControlsCollapsed(localStorage.getItem('codex-mobile-controls-collapsed') === '1');
+      setControlsCollapsed(localStorage.getItem('codex-mobile-controls-collapsed') !== '0');
     } catch (err) {
-      setControlsCollapsed(false);
+      setControlsCollapsed(true);
     }
   }
 
@@ -2599,11 +2339,6 @@
   }
 
   sendBtn.addEventListener('click', function() { sendText(true); });
-  if (ttsTestBtn) {
-    ttsTestBtn.addEventListener('click', function() {
-      playVoiceTest();
-    });
-  }
   if (hotMicBtn) {
     hotMicBtn.addEventListener('pointerup', activateMic);
     hotMicBtn.addEventListener('click', function(event) {
@@ -2612,11 +2347,29 @@
   }
   input.addEventListener('focus', function() {
     document.body.classList.add('input-focus');
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
     syncViewportHeight();
     autoResize();
+    setTimeout(function() {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    }, 50);
+    setTimeout(function() {
+      window.scrollTo(0, 0);
+    }, 300);
   });
+  var suppressBlurCollapse = false;
+
   input.addEventListener('blur', function() {
     window.setTimeout(function() {
+      if (suppressBlurCollapse) {
+        suppressBlurCollapse = false;
+        input.focus();
+        return;
+      }
       if (document.activeElement !== input && !isKeyboardOpen()) {
         document.body.classList.remove('input-focus');
         syncViewportHeight();
@@ -2642,8 +2395,8 @@
   }
 
   syncViewportHeight();
-  input.placeholder = '';
-  input.removeAttribute('placeholder');
+  input.placeholder = 'Message...';
+  /* input.removeAttribute('placeholder'); */
   renderImagePreviews();
   autoResize();
   if ('speechSynthesis' in window && typeof window.speechSynthesis.onvoiceschanged !== 'undefined') {
@@ -2663,5 +2416,41 @@
     }
   });
 </script>
+
+<!-- Variant switcher logic -->
+<script>
+(function() {
+  var switcher = document.getElementById('variant-switcher');
+  if (!switcher) return;
+  var buttons = switcher.querySelectorAll('button');
+  buttons.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var variant = btn.getAttribute('data-variant');
+      document.body.className = variant + ' has-switcher';
+      buttons.forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      // Sync the variant-b-mic button with hot-mic-btn state
+      var mainMic = document.getElementById('hot-mic-btn');
+      var inlineMic = document.querySelector('.variant-b-mic');
+      if (mainMic && inlineMic) {
+        inlineMic.classList.toggle('hot-mic', mainMic.classList.contains('hot-mic'));
+      }
+    });
+  });
+  // Make variant-b-mic click trigger the real hot-mic-btn
+  var inlineMic = document.querySelector('.variant-b-mic');
+  var mainMic = document.getElementById('hot-mic-btn');
+  if (inlineMic && mainMic) {
+    inlineMic.addEventListener('click', function(e) {
+      e.preventDefault();
+      mainMic.click();
+      setTimeout(function() {
+        inlineMic.classList.toggle('hot-mic', mainMic.classList.contains('hot-mic'));
+      }, 50);
+    });
+  }
+})();
+</script>
 </body>
 </html>
+

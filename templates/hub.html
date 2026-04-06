@@ -5,29 +5,29 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Codex Remote Hub">
-<meta name="theme-color" content="#0a0a0f">
+<meta name="theme-color" content="#F5F1EB">
 <title>Codex Remote Hub</title>
 <link rel="apple-touch-icon" href="/icon.png">
 <style>
   :root {
-    --bg: #0a0a0f;
-    --surface: #13131a;
-    --surface-hover: #1a1a24;
-    --border: #252530;
-    --text: #e4e2db;
-    --text-dim: #6b6a65;
-    --accent: #10a37f;
-    --accent-hover: #1ab98f;
-    --accent-glow: rgba(16, 163, 127, 0.08);
-    --danger: #e54545;
-    --danger-bg: rgba(229, 69, 69, 0.08);
-    --success: #4ade80;
-    --success-bg: rgba(74, 222, 128, 0.1);
-    --radius: 12px;
-    --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
-    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --bg: #F5F1EB;
+    --surface: #FFFFFF;
+    --surface-hover: #F0EBE4;
+    --border: #DDD6CB;
+    --text: #2D2926;
+    --text-dim: #8C857C;
+    --accent: #D97706;
+    --accent-hover: #B45309;
+    --accent-glow: rgba(217, 119, 6, 0.06);
+    --danger: #DC2626;
+    --danger-bg: rgba(220, 38, 38, 0.06);
+    --success: #16A34A;
+    --success-bg: rgba(22, 163, 74, 0.08);
+    --radius: 14px;
+    --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -47,20 +47,29 @@
 
   /* ── Header ── */
   .header {
-    padding: 40px 0 6px;
+    padding: 20px 0 6px;
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 0;
   }
 
   .logo {
     font-family: var(--font-mono);
-    font-size: 20px;
+    font-size: 24px;
     font-weight: 700;
     letter-spacing: -0.5px;
     display: flex;
     align-items: baseline;
     gap: 0;
+    padding-bottom: 10px;
+  }
+
+  .header-rule {
+    height: 2.5px;
+    background: var(--accent);
+    border: 0;
+    border-radius: 2px;
+    margin: 0;
   }
 
   .logo-prompt {
@@ -68,7 +77,7 @@
   }
 
   .logo-text {
-    background: linear-gradient(135deg, var(--accent), #6ee7b7);
+    background: linear-gradient(135deg, var(--accent), #F59E0B);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -91,19 +100,35 @@
 
   .subtitle {
     color: var(--text-dim);
-    font-size: 13px;
+    font-size: 12px;
     margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 500;
+  }
+
+  .subtitle-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text);
+    box-shadow: 0 1px 3px rgba(45, 41, 38, 0.06);
   }
 
   .counter {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-dim);
-    background: var(--surface);
-    padding: 4px 12px;
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    letter-spacing: 0.5px;
+    display: none;
   }
 
   /* ── Cards ── */
@@ -123,6 +148,7 @@
     transition: all 0.2s ease;
     position: relative;
     overflow: hidden;
+    box-shadow: 0 1px 3px rgba(45, 41, 38, 0.05);
   }
 
   .card:active {
@@ -165,7 +191,7 @@
 
   .status-dot.active {
     background: var(--success);
-    box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
+    box-shadow: 0 0 8px rgba(22, 163, 74, 0.35);
   }
 
   .status-dot.idle {
@@ -180,9 +206,11 @@
   }
 
   .card-meta {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-dim);
     margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   .card-right {
@@ -306,9 +334,9 @@
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgba(45, 41, 38, 0.3);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     z-index: 1000;
     animation: fadeOverlay 0.2s ease-out;
   }
@@ -436,7 +464,7 @@
     width: 40px;
     height: 40px;
     background: var(--accent-glow);
-    border: 1px solid rgba(16, 163, 127, 0.12);
+    border: 1px solid rgba(217, 119, 6, 0.12);
     border-radius: 10px;
     display: flex;
     align-items: center;
@@ -570,7 +598,7 @@
     padding: 8px 12px;
     border-radius: 20px;
     margin-bottom: 8px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    box-shadow: 0 4px 16px rgba(45,41,38,0.12);
   }
 
   .ptr-icon {
@@ -612,7 +640,7 @@
 
   .capture-card {
     background: var(--surface);
-    border: 1px dashed rgba(16, 163, 127, 0.35);
+    border: 1px dashed rgba(217, 119, 6, 0.3);
     border-left: 3px solid var(--accent);
     border-radius: var(--radius);
     display: flex;
@@ -620,6 +648,7 @@
     transition: all 0.2s ease;
     position: relative;
     overflow: hidden;
+    box-shadow: 0 1px 3px rgba(45, 41, 38, 0.05);
   }
 
   .capture-card:active {
@@ -660,7 +689,7 @@
     border-radius: 50%;
     flex-shrink: 0;
     background: var(--accent);
-    box-shadow: 0 0 8px rgba(16, 163, 127, 0.4);
+    box-shadow: 0 0 8px rgba(217, 119, 6, 0.3);
   }
 
   .capture-badge {
@@ -671,7 +700,7 @@
     letter-spacing: 0.5px;
     background: var(--accent-glow);
     color: var(--accent);
-    border: 1px solid rgba(16, 163, 127, 0.2);
+    border: 1px solid rgba(217, 119, 6, 0.2);
   }
 
   /* ── Desktop responsive ── */
@@ -679,7 +708,7 @@
     body { padding-left: 24px; padding-right: 24px; }
     .header { padding-top: 48px; }
     .card { transition: all 0.15s ease; }
-    .card:hover { background: var(--surface-hover); border-color: rgba(16, 163, 127, 0.2); }
+    .card:hover { background: var(--surface-hover); border-color: rgba(217, 119, 6, 0.25); }
   }
 </style>
 </head>
@@ -696,8 +725,19 @@
       <span class="logo-prompt">&gt;_ </span><span class="logo-text">codex remote hub</span><span class="logo-cursor"></span>
     </span>
     <span class="counter">{{COUNT_TEXT}}</span>
+    <hr class="header-rule">
   </div>
-  <p class="subtitle">Codex CLI Sessions</p>
+  <p class="subtitle" id="subtitle">{{COUNT_TEXT}}</p>
+  <script>
+  (function(){
+    var el = document.getElementById('subtitle');
+    var text = el.textContent.trim();
+    var m = text.match(/^(\d+)\s+(.*)$/);
+    if (m) {
+      el.innerHTML = '<span class="subtitle-count">' + m[1] + '</span> ' + m[2].replace('session','Codex CLI Session');
+    }
+  })();
+  </script>
 
   <div class="sessions-list">
     {{SESSION_CARDS}}
