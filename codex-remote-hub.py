@@ -18,6 +18,7 @@ import glob as _glob
 import platform as _platform
 import re
 import mimetypes
+import tempfile
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import unquote, parse_qs, urlparse
@@ -124,6 +125,17 @@ def _is_image_filename(filename: str) -> bool:
     """Return True if a filename looks like a supported browser-displayable image."""
     mime_type, _ = mimetypes.guess_type(filename)
     return bool(mime_type and mime_type.startswith("image/"))
+
+
+def _is_audio_filename(filename: str) -> bool:
+    """Return True if a filename looks like a browser-playable audio asset."""
+    mime_type, _ = mimetypes.guess_type(filename)
+    return bool(mime_type and mime_type.startswith("audio/"))
+
+
+def _is_session_asset_filename(filename: str) -> bool:
+    """Return True for asset types the session browser is allowed to serve."""
+    return _is_image_filename(filename) or _is_audio_filename(filename)
 
 
 def _sanitize_upload_name(filename: str, content_type: str) -> str:
@@ -550,7 +562,7 @@ def _resolve_session_asset_file(name: str, filename: str) -> tuple[Optional[str]
     if safe_filename in {"", ".", ".."}:
         return None, None
 
-    if not _is_image_filename(safe_filename):
+    if not _is_session_asset_filename(safe_filename):
         return None, None
 
     asset_dir = _session_asset_dir(safe_name)
@@ -568,10 +580,92 @@ def _resolve_session_asset_file(name: str, filename: str) -> tuple[Optional[str]
     return candidate, mime_type or "image/png"
 
 
+def _tts_asset_extension(content_type: str) -> str:
+    """Return a filename extension for synthesized speech assets."""
+    if content_type == "audio/aiff":
+        return ".aiff"
+    return ".wav"
+
+
+def _write_session_tts_asset(name: str, text: str) -> dict:
+    """Generate local speech audio and persist it in the session asset directory."""
+    audio_bytes, content_type = _synthesize_tts_audio(text)
+    safe_name = _safe_path_segment(name)
+    asset_dir = _session_asset_dir(safe_name, ensure=True)
+    filename = f"tts-reply-{int(time.time() * 1000)}{_tts_asset_extension(content_type)}"
+    target_path = os.path.join(asset_dir, filename)
+
+    with open(target_path, "wb") as f:
+        f.write(audio_bytes)
+
+    stat = os.stat(target_path)
+    return {
+        "name": filename,
+        "path": target_path,
+        "url": f"/assets/{safe_name}/{filename}",
+        "content_type": content_type,
+        "updated": int(stat.st_mtime * 1000),
+        "size": stat.st_size,
+    }
+
+
 def _has_ssl_certs() -> bool:
     """Return True when HTTPS certificates are available for the hub and ttyd."""
     cert_file, key_file = _ssl_cert_paths()
     return os.path.exists(cert_file) and os.path.exists(key_file)
+
+
+def _synthesize_tts_audio(text: str) -> tuple[bytes, str]:
+    """Generate local macOS speech audio for a text payload."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        raise ValueError("missing text")
+    if len(cleaned) > 12000:
+        raise ValueError("text too long")
+    if PLATFORM != "darwin":
+        raise RuntimeError("Local TTS is only supported on macOS")
+
+    say_bin = shutil.which("say")
+    if not say_bin:
+        raise RuntimeError("macOS say command not found")
+    afconvert_bin = shutil.which("afconvert")
+
+    fd, output_path = tempfile.mkstemp(prefix="codex-remote-hub-", suffix=".aiff")
+    wav_fd, wav_path = tempfile.mkstemp(prefix="codex-remote-hub-", suffix=".wav")
+    os.close(fd)
+    os.close(wav_fd)
+    try:
+        proc = subprocess.run(
+            [say_bin, "-o", output_path, cleaned],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if proc.returncode != 0:
+            message = (proc.stderr or proc.stdout or "Speech synthesis failed").strip()
+            raise RuntimeError(message or "Speech synthesis failed")
+        if afconvert_bin:
+            convert_proc = subprocess.run(
+                [afconvert_bin, "-f", "WAVE", "-d", "LEI16", output_path, wav_path],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            if convert_proc.returncode == 0:
+                with open(wav_path, "rb") as f:
+                    return f.read(), "audio/wav"
+
+        with open(output_path, "rb") as f:
+            return f.read(), "audio/aiff"
+    finally:
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
 
 
 def _find_free_port() -> int:
@@ -1579,6 +1673,56 @@ class HubHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data).encode())
             return
 
+        if path.startswith("/api/tts-file/"):
+            name = path.split("/api/tts-file/")[1].strip("/")
+            if not name:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+            text = qs.get("text", [""])[0]
+            try:
+                asset = _write_session_tts_asset(name, text)
+            except ValueError as err:
+                self._send_json({"error": str(err)}, 400)
+                return
+            except subprocess.TimeoutExpired:
+                self._send_json({"error": "Speech synthesis timed out"}, 504)
+                return
+            except RuntimeError as err:
+                self._send_json({"error": str(err)}, 500)
+                return
+            except OSError:
+                self._send_json({"error": "Failed to save speech audio"}, 500)
+                return
+
+            self._send_json(asset)
+            return
+
+        if path.startswith("/api/tts/"):
+            name = path.split("/api/tts/")[1].strip("/")
+            if not name:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+            text = qs.get("text", [""])[0]
+            try:
+                audio_bytes, content_type = _synthesize_tts_audio(text)
+            except ValueError as err:
+                self._send_json({"error": str(err)}, 400)
+                return
+            except subprocess.TimeoutExpired:
+                self._send_json({"error": "Speech synthesis timed out"}, 504)
+                return
+            except RuntimeError as err:
+                self._send_json({"error": str(err)}, 500)
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.send_header("Content-Length", str(len(audio_bytes)))
+            self.end_headers()
+            self.wfile.write(audio_bytes)
+            return
+
         # API: list capturable sessions (JSON)
         if path == "/api/capturable":
             sessions = discover_capturable_sessions()
@@ -1744,6 +1888,71 @@ class HubHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+
+        if path.startswith("/api/tts-file/"):
+            name = path.split("/api/tts-file/")[1].strip("/")
+            if not name:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+
+            content_length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(content_length) or b"{}")
+            except json.JSONDecodeError:
+                self._send_json({"error": "invalid json"}, 400)
+                return
+
+            try:
+                asset = _write_session_tts_asset(name, payload.get("text", ""))
+            except ValueError as err:
+                self._send_json({"error": str(err)}, 400)
+                return
+            except subprocess.TimeoutExpired:
+                self._send_json({"error": "Speech synthesis timed out"}, 504)
+                return
+            except RuntimeError as err:
+                self._send_json({"error": str(err)}, 500)
+                return
+            except OSError:
+                self._send_json({"error": "Failed to save speech audio"}, 500)
+                return
+
+            self._send_json(asset)
+            return
+
+        if path.startswith("/api/tts/"):
+            name = path.split("/api/tts/")[1].strip("/")
+            if not name:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+
+            content_length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(content_length) or b"{}")
+            except json.JSONDecodeError:
+                self._send_json({"error": "invalid json"}, 400)
+                return
+
+            try:
+                audio_bytes, content_type = _synthesize_tts_audio(payload.get("text", ""))
+            except ValueError as err:
+                self._send_json({"error": str(err)}, 400)
+                return
+            except subprocess.TimeoutExpired:
+                self._send_json({"error": "Speech synthesis timed out"}, 504)
+                return
+            except RuntimeError as err:
+                self._send_json({"error": str(err)}, 500)
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.send_header("Content-Length", str(len(audio_bytes)))
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(audio_bytes)
+            return
 
         # API: take a native screenshot for a session
         if path.startswith("/api/screenshot/"):

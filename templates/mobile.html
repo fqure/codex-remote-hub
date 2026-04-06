@@ -772,6 +772,9 @@
               <span class="chevron">⌃</span>
             </button>
             <div class="controls-header-actions">
+              <button id="tts-test-btn" class="ghost-btn chip-btn" type="button" aria-label="Test voice">
+                Voice
+              </button>
               <button id="image-btn" class="ghost-btn icon-action-btn controls-upload-btn" type="button" aria-label="Upload image">
                 <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M20 5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3l1.4-1.5A2 2 0 0 1 9.86 3h4.28a2 2 0 0 1 1.46.5L17 5h3Zm-8 3.25A4.75 4.75 0 1 0 16.75 13 4.76 4.76 0 0 0 12 8.25Zm0 1.5A3.25 3.25 0 1 1 8.75 13 3.25 3.25 0 0 1 12 9.75Z"/>
@@ -818,6 +821,7 @@
           </button>
         </div>
         <input id="image-input" type="file" accept="image/*" multiple hidden>
+        <audio id="reply-audio" playsinline preload="auto" hidden></audio>
       </section>
     </div>
   </div>
@@ -843,6 +847,7 @@
   var imageBtn = document.getElementById('image-btn');
   var imageInput = document.getElementById('image-input');
   var hotMicBtn = document.getElementById('hot-mic-btn');
+  var ttsTestBtn = document.getElementById('tts-test-btn');
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
   var composerShell = document.querySelector('.composer-shell');
@@ -852,6 +857,7 @@
   var windowSheet = document.getElementById('window-sheet');
   var windowList = document.getElementById('window-list');
   var windowSheetClose = document.getElementById('window-sheet-close');
+  var replyAudio = document.getElementById('reply-audio');
   var lastText = "";
   var lastCursorY = null;
   var pollTimer = null;
@@ -890,6 +896,7 @@
   var bargeInNoiseFloor = 0.008;
   var bargeInVoiceFrames = 0;
   var lastMicActivationAt = 0;
+  var statusResetTimer = null;
   var HOT_MIC_SILENCE_DELAY = 3000;
   var SPEECH_FOLLOWUP_DELAY = 900;
   var BARGE_IN_MONITOR_DELAY = 180;
@@ -968,6 +975,46 @@
     if (window.console && message) {
       console.debug(message);
     }
+    if (!statusText || !message) return;
+    clearTimeout(statusResetTimer);
+    statusText.textContent = message;
+    statusResetTimer = setTimeout(function() {
+      setUpdatedTime(Date.now());
+    }, 2400);
+  }
+
+  function debugSpeech(message) {
+    if (window.console && message) {
+      console.debug('[tts]', message);
+    }
+    showStatus(message);
+  }
+
+  function describeSpeechError(err) {
+    if (!err) return 'unknown error';
+    if (typeof err === 'string') return err;
+    if (err.name && err.message) return err.name + ': ' + err.message;
+    if (err.message) return err.message;
+    if (err.name) return err.name;
+    return String(err);
+  }
+
+  function refreshSpeechVoice() {
+    if (!('speechSynthesis' in window)) return;
+    var voices = window.speechSynthesis.getVoices();
+    if (!voices || !voices.length) {
+      speechVoice = null;
+      return;
+    }
+
+    var language = (navigator.language || 'en-US').toLowerCase();
+    speechVoice = voices.find(function(voice) {
+      return (voice.lang || '').toLowerCase() === language;
+    }) || voices.find(function(voice) {
+      return language.indexOf((voice.lang || '').toLowerCase().split('-')[0]) === 0;
+    }) || voices.find(function(voice) {
+      return voice.default;
+    }) || voices[0];
   }
 
   function stripAnsi(text) {
@@ -1111,6 +1158,113 @@
     return false;
   }
 
+  function isToolSpeechBlock(block) {
+    var trimmed = (block || '').trim();
+    if (!trimmed) return false;
+
+    if (/^::[a-z0-9-]+\{/i.test(trimmed)) {
+      return true;
+    }
+    if (/^(?:Ran|Edited|Explored|Read|Searched|Compared|Applied|Updated|Created|Deleted|Moved)\b/.test(trimmed)) {
+      return true;
+    }
+    if (/^(?:Command:|Output:|Exit code:|Wall time:|Original token count:|Chunk ID:)/.test(trimmed)) {
+      return true;
+    }
+    if (/^[+|-]{3}(?:\s|$)|^@@/.test(trimmed)) {
+      return true;
+    }
+    if (/^[|└├╭╰│]/.test(trimmed)) {
+      return true;
+    }
+
+    var normalized = normalizeSpeechText(trimmed);
+    if (!normalized) return false;
+    if (/^git-(?:stage|commit|push|create-branch|create-pr)\b/i.test(normalized)) {
+      return true;
+    }
+    if (/^(?:mobile script syntax ok|installed template matches repo)\b/i.test(normalized)) {
+      return true;
+    }
+    return false;
+  }
+
+  function isSpeakableSpeechBlock(block, normalizedSubmitted) {
+    if (!block) return false;
+    if (isUserSpeechBlock(block) || isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
+      return false;
+    }
+    if (isFooterSpeechBlock(block) || isProgressSpeechBlock(block) || isToolSpeechBlock(block)) {
+      return false;
+    }
+
+    var text = normalizeSpeechText(block).replace(/^[\s:;,.!?\-•]+/, '').trim();
+    if (!text) return false;
+    if (normalizedSubmitted) {
+      if (text === normalizedSubmitted ||
+          text.indexOf(normalizedSubmitted) >= 0 ||
+          normalizedSubmitted.indexOf(text) >= 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function extractSpeechReplyFromDeltaBlocks(blocks, normalizedSubmitted) {
+    if (!blocks || !blocks.length) {
+      return { text: '' };
+    }
+
+    var collected = blocks.filter(function(block) {
+      return isSpeakableSpeechBlock(block, normalizedSubmitted);
+    });
+    if (!collected.length) {
+      return { text: '' };
+    }
+
+    return {
+      text: normalizeSpeechText(collected.join('\n\n')).replace(/^[\s:;,.!?\-•]+/, '').trim()
+    };
+  }
+
+  function extractSpeechReplyFromDeltaLines(deltaText, normalizedSubmitted) {
+    var lines = sanitizeForSpeech(deltaText || '')
+      .split('\n')
+      .map(function(line) { return (line || '').trim(); })
+      .filter(Boolean);
+    if (!lines.length) {
+      return { text: '' };
+    }
+
+    var collected = lines.filter(function(line) {
+      if (!line) return false;
+      if (isUserSpeechBlock(line) || isImageSpeechBlock(line) || isDividerSpeechBlock(line)) {
+        return false;
+      }
+      if (isFooterSpeechBlock(line) || isProgressSpeechBlock(line) || isToolSpeechBlock(line)) {
+        return false;
+      }
+      var text = normalizeSpeechText(line).replace(/^[\s:;,.!?\-•]+/, '').trim();
+      if (!text) return false;
+      if (normalizedSubmitted) {
+        if (text === normalizedSubmitted ||
+            text.indexOf(normalizedSubmitted) >= 0 ||
+            normalizedSubmitted.indexOf(text) >= 0) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (!collected.length) {
+      return { text: '' };
+    }
+
+    return {
+      text: normalizeSpeechText(collected.join(' ')).replace(/^[\s:;,.!?\-•]+/, '').trim()
+    };
+  }
+
   function extractSpeechReplyFromBlocks(blocks, userIndex) {
     if (userIndex < 0 || !blocks.length) {
       return { text: '' };
@@ -1122,7 +1276,7 @@
       if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
         break;
       }
-      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block) || isToolSpeechBlock(block)) {
         continue;
       }
       segment.push(block);
@@ -1161,7 +1315,7 @@
       if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
         continue;
       }
-      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block) || isToolSpeechBlock(block)) {
         continue;
       }
       if (isProgressSpeechBlock(block)) {
@@ -1223,11 +1377,19 @@
         if (shortReply.text) {
           return shortReply;
         }
-        deltaUserIndex = findMatchingUserBlockIndex(deltaBlocks, '', false);
+        deltaUserIndex = findMatchingUserBlockIndex(deltaBlocks, '', true);
       }
       var deltaReply = extractSpeechReplyFromBlocks(deltaBlocks, deltaUserIndex);
       if (deltaReply.text) {
         return deltaReply;
+      }
+      var deltaLineReply = extractSpeechReplyFromDeltaLines(deltaText, normalizedSubmitted);
+      if (deltaLineReply.text) {
+        return deltaLineReply;
+      }
+      var deltaFallbackReply = extractSpeechReplyFromDeltaBlocks(deltaBlocks, normalizedSubmitted);
+      if (deltaFallbackReply.text) {
+        return deltaFallbackReply;
       }
     }
 
@@ -1241,7 +1403,10 @@
     userIndex = findMatchingUserBlockIndex(blocks, normalizedSubmitted, true);
 
     if (userIndex < 0) {
-      return { text: '' };
+      userIndex = findMatchingUserBlockIndex(blocks, '', true);
+      if (userIndex < 0) {
+        return { text: '' };
+      }
     }
 
     return extractSpeechReplyFromBlocks(blocks, userIndex);
@@ -1533,54 +1698,98 @@
     speechQueue = [];
     speechPlaybackActive = false;
     speechPlaybackToken += 1;
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+    if (replyAudio) {
+      replyAudio.onended = null;
+      replyAudio.onerror = null;
+      try {
+        replyAudio.pause();
+      } catch (err) {}
+      try {
+        replyAudio.currentTime = 0;
+      } catch (err) {}
+      try {
+        replyAudio.removeAttribute('src');
+        replyAudio.load();
+      } catch (err) {}
     }
-  }
-
-  function refreshSpeechVoice() {
-    if (!('speechSynthesis' in window)) return;
-    var voices = window.speechSynthesis.getVoices();
-    if (!voices || !voices.length) {
-      speechVoice = null;
-      return;
-    }
-
-    var language = (navigator.language || 'en-US').toLowerCase();
-    speechVoice = voices.find(function(voice) {
-      return (voice.lang || '').toLowerCase() === language;
-    }) || voices.find(function(voice) {
-      return language.indexOf((voice.lang || '').toLowerCase().split('-')[0]) === 0;
-    }) || voices.find(function(voice) {
-      return voice.default;
-    }) || voices[0];
   }
 
   function primeSpeechSynthesis() {
-    if (!('speechSynthesis' in window) || speechPrimed) return;
+    if (speechPrimed) return;
+    if (!replyAudio) return;
+    replyAudio.setAttribute('playsinline', '');
+    replyAudio.setAttribute('preload', 'auto');
+    replyAudio.playsInline = true;
+    speechPrimed = true;
+  }
+
+  async function requestServerSpeechAsset(text) {
+    var res = await fetch('/api/tts-file/' + encodeURIComponent(SESSION), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    });
+
+    var payload = {};
     try {
-      refreshSpeechVoice();
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.resume();
-      var utterance = new SpeechSynthesisUtterance(' ');
-      utterance.volume = 0;
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      if (speechVoice) {
-        utterance.voice = speechVoice;
+      payload = await res.json();
+    } catch (err) {}
+
+    if (!res.ok) {
+      throw new Error(payload && payload.error ? payload.error : ('HTTP ' + res.status));
+    }
+    if (!payload || !payload.url) {
+      throw new Error('Speech audio URL missing');
+    }
+    return payload;
+  }
+
+  function startServerSpeechPlayback(url, activeToken, options) {
+    var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
+    if (!replyAudio) {
+      debugSpeech('Audio element unavailable');
+      speechPlaybackActive = false;
+      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+      return;
+    }
+
+    var settled = false;
+    function finish(message, isError) {
+      if (settled || activeToken !== speechPlaybackToken) return;
+      settled = true;
+      replyAudio.onended = null;
+      replyAudio.onerror = null;
+      debugSpeech(message);
+      speechPlaybackActive = false;
+      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+    }
+
+    var playbackUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now();
+    replyAudio.onended = function() {
+      finish('Voice playback ended', false);
+    };
+    replyAudio.onerror = function() {
+      finish('Voice playback error: audio element error', true);
+    };
+
+    try {
+      replyAudio.src = playbackUrl;
+      replyAudio.load();
+      var playPromise = replyAudio.play();
+      debugSpeech('Voice playback started');
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(function(err) {
+          finish('Voice play blocked: ' + describeSpeechError(err), true);
+        });
       }
-      speechPrimed = true;
-      window.speechSynthesis.speak(utterance);
-      window.setTimeout(function() {
-        window.speechSynthesis.cancel();
-      }, 0);
     } catch (err) {
-      speechPrimed = false;
+      finish('Voice play blocked: ' + describeSpeechError(err), true);
     }
   }
 
-  function playNextSpeechChunk() {
-    if (!hotMicEnabled) {
+  async function playNextSpeechChunk(options) {
+    var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
+    if (!hotMicEnabled && !allowWithoutHotMic) {
       stopSpeechPlayback();
       return;
     }
@@ -1598,34 +1807,39 @@
     speechPlaybackActive = true;
     pauseRecognitionForSpeech();
     var activeToken = speechPlaybackToken;
-    var utterance = new SpeechSynthesisUtterance(speechQueue.shift());
-    utterance.lang = navigator.language || 'en-US';
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    utterance.volume = 1;
-    if (speechVoice) {
-      utterance.voice = speechVoice;
+    var text = speechQueue.shift();
+    if (!text) {
+      speechPlaybackActive = false;
+      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+      return;
     }
-    utterance.onend = function() {
-      if (activeToken !== speechPlaybackToken) {
-        return;
-      }
-      speechPlaybackActive = false;
-      playNextSpeechChunk();
-    };
-    utterance.onerror = function() {
-      if (activeToken !== speechPlaybackToken) {
-        return;
-      }
-      speechPlaybackActive = false;
-      playNextSpeechChunk();
-    };
 
-    window.speechSynthesis.speak(utterance);
+    try {
+      debugSpeech('Generating voice audio');
+      var asset = await requestServerSpeechAsset(text);
+      if (activeToken !== speechPlaybackToken) return;
+      debugSpeech('Voice audio received');
+      startServerSpeechPlayback(asset.url, activeToken, {
+        allowWithoutHotMic: allowWithoutHotMic
+      });
+    } catch (err) {
+      if (activeToken !== speechPlaybackToken) return;
+      debugSpeech('Voice playback error: ' + describeSpeechError(err));
+      speechPlaybackActive = false;
+      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+    }
+  }
+
+  function playVoiceTest() {
+    primeSpeechSynthesis();
+    stopSpeechPlayback();
+    speechQueue = ['hello this is an audio test'];
+    speechPlaybackActive = false;
+    playNextSpeechChunk({ allowWithoutHotMic: true });
   }
 
   function speakText(text) {
-    if (!text || !('speechSynthesis' in window)) return;
+    if (!text) return;
 
     var chunks = splitForSpeech(text);
     if (!chunks.length) return;
@@ -1687,7 +1901,7 @@
   }
 
   function scheduleSpeechFromPane(nextText) {
-    if (!hotMicEnabled || !speechAwaitingReply || !('speechSynthesis' in window)) return;
+    if (!hotMicEnabled || !speechAwaitingReply) return;
     speechReplyLatestText = nextText || '';
     speakPendingReplyDelta();
   }
@@ -2385,6 +2599,11 @@
   }
 
   sendBtn.addEventListener('click', function() { sendText(true); });
+  if (ttsTestBtn) {
+    ttsTestBtn.addEventListener('click', function() {
+      playVoiceTest();
+    });
+  }
   if (hotMicBtn) {
     hotMicBtn.addEventListener('pointerup', activateMic);
     hotMicBtn.addEventListener('click', function(event) {
