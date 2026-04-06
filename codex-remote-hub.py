@@ -77,7 +77,7 @@ IGNORED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".tox",
                 ".mypy_cache", ".pytest_cache", "dist", "build", ".next", ".nuxt"}
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_template_cache: dict[str, str] = {}
+_template_cache: dict[str, tuple[float, str]] = {}
 TTYD_PATCH_MARKER = "codex-remote-hub-mobile-v1"
 HUB_AGENTS_START = "<!-- codex-remote-hub:start -->"
 HUB_AGENTS_END = "<!-- codex-remote-hub:end -->"
@@ -661,12 +661,18 @@ def _dependency_install_hint(name: str) -> str:
 
 
 def _load_template(name: str) -> str:
-    """Load an HTML template from templates/ with in-memory caching."""
-    if name not in _template_cache:
-        path = os.path.join(SCRIPT_DIR, "templates", name)
+    """Load an HTML template from templates/, reloading when the file changes."""
+    path = os.path.join(SCRIPT_DIR, "templates", name)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = -1
+
+    cached = _template_cache.get(name)
+    if not cached or cached[0] != mtime:
         with open(path, "r", encoding="utf-8") as f:
-            _template_cache[name] = f.read()
-    return _template_cache[name]
+            _template_cache[name] = (mtime, f.read())
+    return _template_cache[name][1]
 
 
 def _is_codex_cli_process(command: str) -> bool:

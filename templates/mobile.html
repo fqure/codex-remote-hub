@@ -107,6 +107,34 @@
     text-decoration: none;
   }
 
+  .hot-mic-btn {
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .hot-mic-btn.hot-mic {
+    background: rgba(17, 19, 27, 0.96) !important;
+    border-color: rgba(239, 68, 68, 0.72) !important;
+    color: #ff4d4d !important;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18), 0 0 18px rgba(239, 68, 68, 0.24);
+  }
+
+  .hot-mic-btn .btn-icon {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.65;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .hot-mic-btn.hot-mic .btn-icon,
+  .hot-mic-btn.hot-mic .btn-icon path {
+    fill: none !important;
+    stroke: #ff4d4d !important;
+  }
+
   .session-wrap {
     min-width: 0;
   }
@@ -531,12 +559,6 @@
     white-space: nowrap;
   }
 
-  .mic-btn.listening {
-    border-color: rgba(16, 163, 127, 0.45);
-    background: rgba(16, 163, 127, 0.18);
-    color: #dffff5;
-  }
-
   .icon-action-btn {
     width: var(--icon-btn-h);
     height: var(--icon-btn-h);
@@ -580,7 +602,7 @@
     font-size: 13px;
   }
 
-  .mic-btn {
+  .hot-mic-btn {
     height: var(--icon-btn-h);
     min-width: var(--icon-btn-h);
     padding: 0;
@@ -842,9 +864,12 @@
             <div id="image-preview-strip" class="image-preview-strip" aria-live="polite"></div>
             <textarea id="composer-input" class="composer-input" rows="1" aria-label="Send text to Codex"></textarea>
           </div>
-          <button id="mic-btn" class="ghost-btn mic-btn icon-action-btn" type="button" aria-label="Microphone">
-            <svg class="btn-icon" viewBox="0 0 2.271 2.271" aria-hidden="true">
-              <path d="M2.271,1.135c0,0.626 -0.509,1.135 -1.136,1.135c-0.626,-0 -1.135,-0.509 -1.135,-1.135c0,-0.626 0.509,-1.135 1.135,-1.135c0.627,0 1.136,0.509 1.136,1.135Zm-0.821,-0.142l-0,0.153c-0,0.184 -0.132,0.317 -0.315,0.317c-0.182,-0 -0.314,-0.133 -0.314,-0.317l0,-0.153c0,-0.035 -0.029,-0.068 -0.066,-0.068c-0.035,0 -0.067,0.033 -0.067,0.068l-0,0.153c-0,0.236 0.152,0.411 0.379,0.44l0,0.094l-0.226,0c-0.037,0 -0.07,0.033 -0.07,0.069c-0,0.038 0.033,0.068 0.07,0.068l0.591,-0c0.035,-0 0.067,-0.031 0.067,-0.068c0,-0.036 -0.031,-0.069 -0.067,-0.069l-0.227,0l0,-0.094c0.227,-0.031 0.377,-0.204 0.377,-0.44l0,-0.153c0,-0.035 -0.031,-0.068 -0.066,-0.068c-0.037,0 -0.066,0.033 -0.066,0.068Zm-0.504,-0.326l0,0.486c0,0.115 0.078,0.203 0.189,0.203c0.111,-0 0.19,-0.088 0.19,-0.203l-0,-0.486c-0,-0.116 -0.079,-0.2 -0.19,-0.2c-0.111,-0 -0.189,0.084 -0.189,0.2Z"/>
+          <button id="hot-mic-btn" class="ghost-btn hot-mic-btn icon-action-btn" type="button" aria-label="Start hot mic" title="Hot mic">
+            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3.75a2.25 2.25 0 0 1 2.25 2.25v6.75a2.25 2.25 0 0 1-4.5 0V6A2.25 2.25 0 0 1 12 3.75Z"></path>
+              <path d="M18 10.5v1.5a6 6 0 0 1-12 0v-1.5"></path>
+              <path d="M12 18v2.25"></path>
+              <path d="M9.75 20.25h4.5"></path>
             </svg>
           </button>
           <button id="send-btn" class="send-btn icon-action-btn" type="button" aria-label="Send">
@@ -878,7 +903,7 @@
   var input = document.getElementById('composer-input');
   var imageBtn = document.getElementById('image-btn');
   var imageInput = document.getElementById('image-input');
-  var micBtn = document.getElementById('mic-btn');
+  var hotMicBtn = document.getElementById('hot-mic-btn');
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
   var composerShell = document.querySelector('.composer-shell');
@@ -899,6 +924,19 @@
   var recognition = null;
   var recognitionBaseText = '';
   var recognitionListening = false;
+  var hotMicEnabled = false;
+  var hotMicSendTimer = null;
+  var speechTimer = null;
+  var speechLastText = '';
+  var speechQueue = [];
+  var speechPlaybackActive = false;
+  var speechPrimed = false;
+  var speechVoice = null;
+  var recognitionRestartTimer = null;
+  var recognitionPausedForSpeech = false;
+  var speechPlaybackToken = 0;
+  var HOT_MIC_SILENCE_DELAY = 3000;
+  var SPEECH_DEBOUNCE_DELAY = 900;
 
   function isKeyboardOpen() {
     if (!window.visualViewport) return false;
@@ -949,6 +987,353 @@
     if (window.console && message) {
       console.debug(message);
     }
+  }
+
+  function stripAnsi(text) {
+    return (text || '').replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+  }
+
+  function sanitizeForSpeech(text) {
+    return stripAnsi(text || '')
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
+      .replace(/\r/g, '')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function stripPromptPrefix(line) {
+    return (line || '')
+      .replace(/^\s*(?:›|\$|❯)\s*/, '')
+      .replace(/^\s*[\w.-]+@[\w.-]+(?::[^\s]+)?[$#]\s*/, '')
+      .replace(/^\s*(?:~|\/)[^%#$\n]*[%#$]\s*/, '');
+  }
+
+  function normalizeSpeechLine(line) {
+    return stripPromptPrefix(line)
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function normalizeSpeechText(text) {
+    return sanitizeForSpeech(text)
+      .split('\n')
+      .map(normalizeSpeechLine)
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+  }
+
+  function splitForSpeech(text) {
+    var remaining = (text || '').trim();
+    var chunks = [];
+    var maxLen = 1800;
+
+    while (remaining.length > maxLen) {
+      var cut = remaining.lastIndexOf('\n\n', maxLen);
+      if (cut < 300) {
+        cut = remaining.lastIndexOf('\n', maxLen);
+      }
+      if (cut < 300) {
+        cut = remaining.lastIndexOf('. ', maxLen);
+      }
+      if (cut < 300) {
+        cut = maxLen;
+      }
+
+      var chunk = remaining.slice(0, cut).trim();
+      if (chunk) {
+        chunks.push(chunk);
+      }
+      remaining = remaining.slice(cut).trim();
+    }
+
+    if (remaining) {
+      chunks.push(remaining);
+    }
+
+    return chunks;
+  }
+
+  function paneTextDelta(previousText, currentText) {
+    var prev = previousText || '';
+    var next = currentText || '';
+    if (!prev) return next;
+    if (next.indexOf(prev) === 0) {
+      return next.slice(prev.length);
+    }
+
+    var prevLines = prev.split('\n');
+    var nextLines = next.split('\n');
+    var maxOverlap = Math.min(prevLines.length, nextLines.length);
+    for (var overlap = maxOverlap; overlap > 0; overlap -= 1) {
+      var matches = true;
+      for (var j = 0; j < overlap; j += 1) {
+        if (prevLines[prevLines.length - overlap + j] !== nextLines[j]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        return nextLines.slice(overlap).join('\n');
+      }
+    }
+
+    var i = 0;
+    while (i < prevLines.length && i < nextLines.length && prevLines[i] === nextLines[i]) {
+      i += 1;
+    }
+    return nextLines.slice(i).join('\n');
+  }
+
+  function refreshMicButtonState() {
+    if (!hotMicBtn) return;
+    hotMicBtn.classList.toggle('hot-mic', hotMicEnabled);
+    hotMicBtn.style.background = hotMicEnabled ? 'rgba(17, 19, 27, 0.96)' : '';
+    hotMicBtn.style.borderColor = hotMicEnabled ? 'rgba(239, 68, 68, 0.72)' : '';
+    hotMicBtn.style.color = hotMicEnabled ? '#ff4d4d' : '';
+    hotMicBtn.style.boxShadow = hotMicEnabled
+      ? '0 0 0 1px rgba(239, 68, 68, 0.18), 0 0 18px rgba(239, 68, 68, 0.24)'
+      : '';
+    var micIcon = hotMicBtn.querySelector('.btn-icon');
+    if (micIcon) {
+      micIcon.style.fill = 'none';
+      micIcon.style.stroke = hotMicEnabled ? '#ff4d4d' : '';
+    }
+    hotMicBtn.setAttribute(
+      'aria-label',
+      hotMicEnabled ? 'Stop hot mic' : 'Start hot mic'
+    );
+    hotMicBtn.setAttribute(
+      'title',
+      hotMicEnabled ? 'Hot mic on' : 'Hot mic off'
+    );
+  }
+
+  function scheduleRecognitionRestart(delay) {
+    clearTimeout(recognitionRestartTimer);
+    recognitionRestartTimer = setTimeout(function() {
+      if (hotMicEnabled && !recognitionListening && !recognitionPausedForSpeech) {
+        startRecognition();
+      }
+    }, typeof delay === 'number' ? delay : 250);
+  }
+
+  function startRecognition() {
+    if (!recognition || recognitionListening) return;
+    clearTimeout(recognitionRestartTimer);
+    recognitionRestartTimer = null;
+    try {
+      recognition.start();
+    } catch (err) {}
+  }
+
+  function stopRecognition() {
+    if (!recognition || !recognitionListening) return;
+    try {
+      recognition.stop();
+    } catch (err) {}
+  }
+
+  function pauseRecognitionForSpeech() {
+    if (!hotMicEnabled) return;
+    recognitionPausedForSpeech = true;
+    clearTimeout(recognitionRestartTimer);
+    recognitionRestartTimer = null;
+    if (recognitionListening) {
+      stopRecognition();
+    }
+  }
+
+  function resumeRecognitionAfterSpeech() {
+    if (!hotMicEnabled) return;
+    speechPlaybackActive = false;
+    recognitionPausedForSpeech = false;
+    scheduleRecognitionRestart(220);
+  }
+
+  function stopSpeechPlayback() {
+    clearTimeout(speechTimer);
+    speechTimer = null;
+    speechQueue = [];
+    speechPlaybackActive = false;
+    speechPlaybackToken += 1;
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+  }
+
+  function refreshSpeechVoice() {
+    if (!('speechSynthesis' in window)) return;
+    var voices = window.speechSynthesis.getVoices();
+    if (!voices || !voices.length) {
+      speechVoice = null;
+      return;
+    }
+
+    var language = (navigator.language || 'en-US').toLowerCase();
+    speechVoice = voices.find(function(voice) {
+      return (voice.lang || '').toLowerCase() === language;
+    }) || voices.find(function(voice) {
+      return language.indexOf((voice.lang || '').toLowerCase().split('-')[0]) === 0;
+    }) || voices.find(function(voice) {
+      return voice.default;
+    }) || voices[0];
+  }
+
+  function primeSpeechSynthesis() {
+    if (!('speechSynthesis' in window) || speechPrimed) return;
+    try {
+      refreshSpeechVoice();
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+      var utterance = new SpeechSynthesisUtterance(' ');
+      utterance.volume = 0;
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      if (speechVoice) {
+        utterance.voice = speechVoice;
+      }
+      speechPrimed = true;
+      window.speechSynthesis.speak(utterance);
+      window.setTimeout(function() {
+        window.speechSynthesis.cancel();
+      }, 0);
+    } catch (err) {
+      speechPrimed = false;
+    }
+  }
+
+  function playNextSpeechChunk() {
+    if (!hotMicEnabled) {
+      stopSpeechPlayback();
+      return;
+    }
+
+    if (!speechQueue.length) {
+      resumeRecognitionAfterSpeech();
+      return;
+    }
+
+    speechPlaybackActive = true;
+    pauseRecognitionForSpeech();
+    var activeToken = speechPlaybackToken;
+    var utterance = new SpeechSynthesisUtterance(speechQueue.shift());
+    utterance.lang = navigator.language || 'en-US';
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    if (speechVoice) {
+      utterance.voice = speechVoice;
+    }
+    utterance.onend = function() {
+      if (activeToken !== speechPlaybackToken) {
+        return;
+      }
+      speechPlaybackActive = false;
+      playNextSpeechChunk();
+    };
+    utterance.onerror = function() {
+      if (activeToken !== speechPlaybackToken) {
+        return;
+      }
+      speechPlaybackActive = false;
+      playNextSpeechChunk();
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function speakText(text) {
+    if (!text || !('speechSynthesis' in window)) return;
+
+    var chunks = splitForSpeech(text);
+    if (!chunks.length) return;
+
+    Array.prototype.push.apply(speechQueue, chunks);
+    if (!speechPlaybackActive) {
+      playNextSpeechChunk();
+    }
+  }
+
+  function scheduleSpeechFromPane(nextText, submittedText) {
+    if (!hotMicEnabled || !('speechSynthesis' in window)) return;
+    clearTimeout(speechTimer);
+    speechTimer = setTimeout(function() {
+      if (!hotMicEnabled) return;
+
+      var delta = paneTextDelta(speechLastText, nextText);
+      var normalizedSubmitted = normalizeSpeechText(submittedText);
+      var normalizedDelta = normalizeSpeechText(delta);
+
+      while (normalizedSubmitted && normalizedDelta.indexOf(normalizedSubmitted) === 0) {
+        normalizedDelta = normalizedDelta.slice(normalizedSubmitted.length).trim();
+      }
+
+      if (!normalizedDelta) {
+        speechLastText = nextText || '';
+        return;
+      }
+
+      speechLastText = nextText || '';
+      speakText(normalizedDelta);
+    }, SPEECH_DEBOUNCE_DELAY);
+  }
+
+  function scheduleHotMicSend() {
+    if (!hotMicEnabled) return;
+    clearTimeout(hotMicSendTimer);
+    hotMicSendTimer = setTimeout(function() {
+      if (!hotMicEnabled) return;
+      if (!input.value.trim()) return;
+      sendText(true);
+    }, HOT_MIC_SILENCE_DELAY);
+  }
+
+  function setHotMicEnabled(enabled) {
+    if (enabled && (!SpeechRecognitionCtor || !recognition)) {
+      hotMicEnabled = false;
+      refreshMicButtonState();
+      showStatus('Speech recognition unavailable here');
+      return;
+    }
+
+    hotMicEnabled = enabled;
+    clearTimeout(hotMicSendTimer);
+    hotMicSendTimer = null;
+    clearTimeout(recognitionRestartTimer);
+    recognitionRestartTimer = null;
+
+    if (enabled) {
+      speechLastText = lastText || '';
+      recognitionPausedForSpeech = false;
+      primeSpeechSynthesis();
+      if (document.activeElement === input) {
+        input.blur();
+        document.body.classList.remove('input-focus');
+        syncViewportHeight();
+      }
+      showStatus('Hot mic on');
+      startRecognition();
+    } else {
+      stopSpeechPlayback();
+      recognitionPausedForSpeech = false;
+      stopRecognition();
+      showStatus('Hot mic off');
+    }
+
+    refreshMicButtonState();
+  }
+
+  function handleMicButtonTap() {
+    setHotMicEnabled(!hotMicEnabled);
+  }
+
+  function activateMic(event) {
+    if (event && event.cancelable) {
+      event.preventDefault();
+    }
+    handleMicButtonTap();
   }
 
   function setControlsCollapsed(collapsed) {
@@ -1233,18 +1618,27 @@
 
   function maybeClearPendingInput(nextText) {
     if (!pendingSubmittedText) return;
-    if (input.value !== pendingInputSnapshot) return;
 
     var sent = normalizeMatchText(pendingSubmittedText);
     var paneText = normalizeMatchText(nextText);
     if (!sent || !paneText.includes(sent)) return;
+    var snapshot = pendingInputSnapshot;
 
-    input.value = '';
     pendingSubmittedText = '';
     pendingInputSnapshot = '';
+
+    if (input.value === snapshot) {
+      input.value = '';
+      renderImagePreviews();
+      autoResize();
+      if (!hotMicEnabled) {
+        input.focus();
+      }
+      return;
+    }
+
     renderImagePreviews();
     autoResize();
-    input.focus();
   }
 
   async function fetchPane(forceStick) {
@@ -1263,7 +1657,11 @@
       var nextText = data.text || '';
       var nextCursorY = typeof data.cursor_y === 'number' ? data.cursor_y : null;
       if (nextText !== lastText || nextCursorY !== lastCursorY) {
+        var submittedForSpeech = pendingSubmittedText;
         renderPaneText(nextText);
+        if (nextText !== lastText) {
+          scheduleSpeechFromPane(nextText, submittedForSpeech);
+        }
         maybeClearPendingInput(nextText);
         lastText = nextText;
         lastCursorY = nextCursorY;
@@ -1338,6 +1736,9 @@
       return;
     }
 
+    clearTimeout(hotMicSendTimer);
+    hotMicSendTimer = null;
+
     var composedText = text;
     var ok = await postJson('/api/send-text/' + encodeURIComponent(SESSION), { text: composedText });
     if (ok && withEnter) {
@@ -1346,8 +1747,14 @@
 
     showStatus(ok ? 'Sent to Codex' : 'Send failed');
     if (ok) {
+      primeSpeechSynthesis();
       pendingSubmittedText = composedText;
       pendingInputSnapshot = input.value;
+      if (hotMicEnabled) {
+        input.value = '';
+        renderImagePreviews();
+        autoResize();
+      }
       setTimeout(function() { fetchPane(true); }, 120);
     }
   }
@@ -1367,9 +1774,15 @@
 
   function setMicState(listening) {
     recognitionListening = listening;
-    if (!micBtn) return;
-    micBtn.classList.toggle('listening', listening);
-    micBtn.setAttribute('aria-label', listening ? 'Stop microphone' : 'Microphone');
+    refreshMicButtonState();
+  }
+
+  function mergeTranscriptWithBaseText(baseText, transcript) {
+    var base = baseText || '';
+    var next = transcript || '';
+    if (!base) return next;
+    if (!next) return base;
+    return /\s$/.test(base) ? base + next : base + ' ' + next;
   }
 
   function initMic() {
@@ -1381,9 +1794,9 @@
     recognition.lang = navigator.language || 'en-US';
 
     recognition.onstart = function() {
-      recognitionBaseText = input.value.trim();
+      recognitionBaseText = input.value;
       setMicState(true);
-      showStatus('Listening…');
+      showStatus(hotMicEnabled ? 'Hot mic listening' : 'Listening…');
     };
 
     recognition.onresult = function(event) {
@@ -1392,40 +1805,48 @@
         transcript += event.results[i][0].transcript;
       }
       transcript = transcript.trim();
-      input.value = recognitionBaseText
-        ? recognitionBaseText + (transcript ? ' ' + transcript : '')
-        : transcript;
+      input.value = mergeTranscriptWithBaseText(recognitionBaseText, transcript);
       autoResize();
+      if (hotMicEnabled) {
+        scheduleHotMicSend();
+      }
     };
 
-    recognition.onerror = function() {
+    recognition.onerror = function(event) {
       setMicState(false);
+      var errorCode = event && event.error ? event.error : '';
+      if (hotMicEnabled) {
+        if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
+          setHotMicEnabled(false);
+          showStatus('Hot mic unavailable');
+          return;
+        }
+        if (!recognitionPausedForSpeech) {
+          scheduleRecognitionRestart(350);
+        }
+        showStatus(errorCode === 'no-speech' ? 'Hot mic waiting' : 'Hot mic listening');
+        return;
+      }
       showStatus('Mic unavailable here');
       input.focus();
     };
 
     recognition.onend = function() {
       setMicState(false);
+      if (recognitionPausedForSpeech) {
+        resumeRecognitionAfterSpeech();
+        return;
+      }
+      if (hotMicEnabled) {
+        showStatus('Hot mic listening');
+        scheduleRecognitionRestart(250);
+        return;
+      }
       input.focus();
       showStatus(input.value.trim()
         ? 'Transcript ready to send'
         : 'Mic stopped');
     };
-  }
-
-  function toggleMic() {
-    if (!SpeechRecognitionCtor || !recognition) {
-      input.focus();
-      showStatus('Use the iPhone keyboard mic to dictate');
-      return;
-    }
-
-    if (recognitionListening) {
-      recognition.stop();
-      return;
-    }
-
-    recognition.start();
   }
 
   document.querySelectorAll('[data-key]').forEach(function(btn) {
@@ -1490,7 +1911,16 @@
   }
 
   sendBtn.addEventListener('click', function() { sendText(true); });
-  micBtn.addEventListener('click', toggleMic);
+  if (hotMicBtn) {
+    hotMicBtn.addEventListener('touchend', activateMic, { passive: false });
+    hotMicBtn.addEventListener('click', function(event) {
+      if (event.detail !== 0) {
+        event.preventDefault();
+        return;
+      }
+      activateMic(event);
+    });
+  }
   input.addEventListener('focus', function() {
     if (window.innerWidth < 700) {
       document.body.classList.add('input-focus');
@@ -1529,12 +1959,20 @@
   input.removeAttribute('placeholder');
   renderImagePreviews();
   autoResize();
+  if ('speechSynthesis' in window && typeof window.speechSynthesis.onvoiceschanged !== 'undefined') {
+    window.speechSynthesis.onvoiceschanged = refreshSpeechVoice;
+  }
+  refreshSpeechVoice();
   initMic();
+  refreshMicButtonState();
   fetchPane(true);
   pollTimer = setInterval(function() { fetchPane(false); }, 1000);
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible') {
       fetchPane(true);
+      if (hotMicEnabled && !recognitionListening && !recognitionPausedForSpeech) {
+        scheduleRecognitionRestart(50);
+      }
     }
   });
 </script>

@@ -81,7 +81,9 @@ do_uninstall() {
 
     # Stop service
     if [ "$OS" = "macos" ]; then
-        launchctl unload "$HOME/Library/LaunchAgents/${LABEL}.plist" 2>/dev/null || true
+        launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || \
+            launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/${LABEL}.plist" 2>/dev/null || \
+            launchctl unload "$HOME/Library/LaunchAgents/${LABEL}.plist" 2>/dev/null || true
         rm -f "$HOME/Library/LaunchAgents/${LABEL}.plist"
     elif [ "$OS" = "linux" ]; then
         systemctl --user stop codex-remote-hub 2>/dev/null || true
@@ -261,7 +263,9 @@ case "$OS" in
         # Stop previous service if exists
         if launchctl list "$LABEL" &>/dev/null 2>&1; then
             info "Stopping previous service..."
-            launchctl unload "$PLIST_PATH" 2>/dev/null || true
+            launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || \
+                launchctl bootout "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || \
+                launchctl unload "$PLIST_PATH" 2>/dev/null || true
         fi
 
         cat > "$PLIST_PATH" << PLIST
@@ -394,7 +398,8 @@ step "5/6  Starting Codex Remote Hub..."
 
 case "$OS" in
     macos)
-        launchctl load "$PLIST_PATH"
+        launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || launchctl load "$PLIST_PATH"
+        launchctl kickstart -k "gui/$(id -u)/${LABEL}" 2>/dev/null || true
         sleep 1
         if lsof -i ":${HUB_PORT}" &>/dev/null; then
             ok "Server running on port ${HUB_PORT}"
@@ -433,6 +438,24 @@ cat > "$INSTALL_DIR/ctl.sh" << 'CTLEOF'
 #!/bin/bash
 LABEL="com.codex-remote-hub.server"
 INSTALL_DIR="$HOME/.codex-remote-hub"
+PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
+LAUNCHCTL_TARGET="gui/$(id -u)/${LABEL}"
+
+launchctl_bootout_service() {
+    launchctl bootout "${LAUNCHCTL_TARGET}" 2>/dev/null || \
+        launchctl bootout "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || \
+        launchctl unload "${PLIST_PATH}" 2>/dev/null || true
+}
+
+launchctl_start_service() {
+    if launchctl print "${LAUNCHCTL_TARGET}" &>/dev/null; then
+        launchctl kickstart -k "${LAUNCHCTL_TARGET}" 2>/dev/null || true
+        return
+    fi
+    launchctl bootstrap "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || \
+        launchctl load "${PLIST_PATH}" 2>/dev/null || true
+    launchctl kickstart -k "${LAUNCHCTL_TARGET}" 2>/dev/null || true
+}
 
 # Detect OS
 case "$(uname -s)" in
@@ -450,7 +473,7 @@ case "${1:-status}" in
     start)
         case "$OS" in
             macos)
-                launchctl load "$HOME/Library/LaunchAgents/${LABEL}.plist" 2>/dev/null
+                launchctl_start_service
                 ;;
             linux)
                 systemctl --user start codex-remote-hub
@@ -465,7 +488,7 @@ case "${1:-status}" in
     stop)
         case "$OS" in
             macos)
-                launchctl unload "$HOME/Library/LaunchAgents/${LABEL}.plist" 2>/dev/null
+                launchctl_bootout_service
                 ;;
             linux)
                 systemctl --user stop codex-remote-hub
@@ -481,7 +504,17 @@ case "${1:-status}" in
         echo "  Codex Remote Hub stopped"
         ;;
     restart)
-        "$0" stop && sleep 1 && "$0" start
+        case "$OS" in
+            macos)
+                launchctl_bootout_service
+                sleep 1
+                launchctl_start_service
+                ;;
+            *)
+                "$0" stop && sleep 1 && "$0" start
+                ;;
+        esac
+        echo "  Codex Remote Hub restarted"
         ;;
     status)
         running=false

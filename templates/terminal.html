@@ -356,11 +356,23 @@
 
   directLink.href = TERMINAL_URL;
 
-  // Mobile detection: iPhone/iPad use the hub's mobile-first shell instead of raw ttyd.
-  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  // Prefer the hub's mobile-first shell for touch/mobile browsers and Chrome.
+  // `?raw=1` keeps the legacy ttyd iframe path available as an escape hatch.
+  var params = new URLSearchParams(window.location.search);
+  var forceRawTerminal = params.get('raw') === '1';
+  var userAgent = navigator.userAgent || '';
+  var isIOS = /iPad|iPhone|iPod/.test(userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var isAndroid = /Android/i.test(userAgent);
+  var isChrome = /\b(?:Chrome|CriOS)\b/.test(userAgent) && !/\b(?:Edg|OPR)\b/.test(userAgent);
+  var prefersMobileShell = !forceRawTerminal && (isIOS || isAndroid || isChrome);
 
   async function connectTerminal() {
+    if (prefersMobileShell) {
+      window.location.replace('/mobile/' + encodeURIComponent(SESSION));
+      return;
+    }
+
     loading.classList.remove('hidden');
     loadingText.textContent = 'Connecting to terminal...';
     var attempts = 0;
@@ -374,11 +386,7 @@
       if (attempts > 3) loadingText.textContent = 'Waiting for terminal...';
       await new Promise(function(ok) { setTimeout(ok, 300); });
     }
-    if (isIOS) {
-      window.location.replace('/mobile/' + encodeURIComponent(SESSION));
-      return;
-    }
-    // Android Chrome and desktop browsers: use iframe
+    // Desktop/non-mobile browsers: use iframe ttyd
     iframe.src = TERMINAL_URL;
     iframe.onload = function() { loading.classList.add('hidden'); };
     setTimeout(function() { loading.classList.add('hidden'); }, 3000);
