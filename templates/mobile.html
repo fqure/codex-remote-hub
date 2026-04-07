@@ -852,6 +852,7 @@
   var speechReplyLatestText = '';
   var speechReplySpokenText = '';
   var speechAwaitingReply = false;
+  var speechHardStopped = false;
   var suppressInputFocusAfterMicStop = false;
   var bargeInStartTimer = null;
   var bargeInMonitorTimer = null;
@@ -1329,13 +1330,18 @@
   }
 
   function shouldInterruptTmuxForBargeIn() {
-    return hotMicEnabled && speechAwaitingReply;
+    return hotMicEnabled && (
+      speechAwaitingReply ||
+      speechPlaybackActive ||
+      speechQueue.length
+    );
   }
 
   function triggerBargeIn() {
     if (!hotMicEnabled) return;
 
     var shouldInterruptTmux = shouldInterruptTmuxForBargeIn();
+    speechHardStopped = true;
     stopBargeInMonitor();
     stopSpeechPlayback();
     resetSpeechReplyTracking();
@@ -1749,6 +1755,10 @@
 
   async function playNextSpeechChunk(options) {
     var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
+    if (speechHardStopped && !allowWithoutHotMic) {
+      stopSpeechPlayback();
+      return;
+    }
     if (!hotMicEnabled && !allowWithoutHotMic) {
       stopSpeechPlayback();
       return;
@@ -1805,6 +1815,7 @@
 
   function speakText(text) {
     if (!text) return;
+    if (speechHardStopped) return;
 
     var chunks = splitForSpeech(text);
     if (!chunks.length) return;
@@ -1840,6 +1851,12 @@
     clearTimeout(speechTimer);
     speechTimer = null;
 
+    if (speechHardStopped) {
+      resetSpeechReplyTracking();
+      resumeRecognitionAfterSpeech();
+      return;
+    }
+
     if (!hotMicEnabled || !speechAwaitingReply) {
       return;
     }
@@ -1866,6 +1883,7 @@
   }
 
   function scheduleSpeechFromPane(nextText) {
+    if (speechHardStopped) return;
     if (!hotMicEnabled || !speechAwaitingReply) return;
     speechReplyLatestText = nextText || '';
     speakPendingReplyDelta();
@@ -1902,6 +1920,7 @@
     recognitionRestartTimer = null;
 
     if (enabled) {
+      speechHardStopped = false;
       resetSpeechReplyTracking();
       recognitionPausedForSpeech = false;
       primeSpeechSynthesis();
@@ -1914,6 +1933,7 @@
       showStatus('Hot mic on');
       startRecognition();
     } else {
+      speechHardStopped = false;
       suppressInputFocusAfterMicStop = true;
       stopSpeechPlayback();
       resetSpeechReplyTracking();
@@ -2360,6 +2380,7 @@
 
     showStatus(ok ? 'Sent to ' + SESSION_PRODUCT : 'Send failed');
     if (ok) {
+      speechHardStopped = false;
       primeSpeechSynthesis();
       pendingSubmittedText = composedText;
       pendingInputSnapshot = input.value;
