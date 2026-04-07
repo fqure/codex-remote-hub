@@ -168,6 +168,54 @@ def _session_asset_dir(name: str, agent: str = DEFAULT_AGENT, ensure: bool = Fal
     return asset_dir
 
 
+def _session_mobile_log_path(name: str, agent: str = DEFAULT_AGENT) -> str:
+    """Return the per-session mobile debug log path."""
+    return os.path.join(_session_asset_dir(name, agent=agent, ensure=True), "mobile-debug.log")
+
+
+def _append_session_mobile_log(
+    name: str,
+    message: str,
+    agent: str = DEFAULT_AGENT,
+    source: str = "mobile",
+) -> None:
+    """Append a timestamped mobile debug line for a session."""
+    text = (message or "").strip()
+    if not text:
+        return
+    line = json.dumps({
+        "ts": int(time.time() * 1000),
+        "source": source,
+        "message": text[:2000],
+    }, ensure_ascii=True)
+    with open(_session_mobile_log_path(name, agent=agent), "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def _read_session_mobile_log(name: str, agent: str = DEFAULT_AGENT, tail: int = 80) -> list[dict]:
+    """Return recent mobile debug log entries for a session."""
+    log_path = _session_mobile_log_path(name, agent=agent)
+    if not os.path.isfile(log_path):
+        return []
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+
+    entries: list[dict] = []
+    for line in lines[-max(1, min(tail, 400)):]:
+        raw = (line or "").strip()
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = {"ts": 0, "source": "mobile", "message": raw}
+        entries.append(parsed)
+    return entries
+
+
 def _is_image_filename(filename: str) -> bool:
     """Return True if a filename looks like a supported browser-displayable image."""
     mime_type, _ = mimetypes.guess_type(filename)
@@ -2293,6 +2341,18 @@ class HubHandler(BaseHTTPRequestHandler):
             self._send_json(asset)
             return
 
+        if path.startswith("/api/mobile-log/"):
+            name = path.split("/api/mobile-log/")[1].strip("/")
+            if not name:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+            try:
+                tail = int(qs.get("tail", ["80"])[0])
+            except (ValueError, IndexError):
+                tail = 80
+            self._send_json({"entries": _read_session_mobile_log(name, agent=agent, tail=tail)})
+            return
+
         if path.startswith("/api/tts/"):
             name = path.split("/api/tts/")[1].strip("/")
             if not name:
@@ -2536,6 +2596,33 @@ class HubHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(asset)
+            return
+
+        if path.startswith("/api/mobile-log/"):
+            name = path.split("/api/mobile-log/")[1].strip("/")
+            if not name:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+
+            content_length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(content_length) or b"{}")
+            except json.JSONDecodeError:
+                self._send_json({"error": "invalid json"}, 400)
+                return
+
+            try:
+                _append_session_mobile_log(
+                    name,
+                    payload.get("message", ""),
+                    agent=agent,
+                    source=str(payload.get("source", "mobile") or "mobile"),
+                )
+            except OSError:
+                self._send_json({"error": "Failed to write mobile log"}, 500)
+                return
+
+            self._send_json({"ok": True})
             return
 
         if path.startswith("/api/tts/"):

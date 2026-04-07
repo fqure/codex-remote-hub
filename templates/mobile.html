@@ -121,11 +121,17 @@
     flex-shrink: 0;
   }
 
-  .session-wrap { flex: 1; min-width: 0; }
+  .session-wrap {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
 
   .session-top {
-    display: flex; align-items: baseline;
-    justify-content: space-between; gap: 8px; min-width: 0;
+    width: 100%;
+    min-width: 0;
   }
 
   .session-name {
@@ -136,18 +142,22 @@
   }
 
   .session-updated {
-    flex-shrink: 0;
-    font: 500 11px/1 var(--sans);
-    color: var(--text-tertiary);
-    white-space: nowrap;
+    margin-top: 3px;
+    width: 100%;
+    font: 600 12px/1.25 var(--sans);
+    color: var(--accent);
+    text-align: left;
+    white-space: normal;
+    word-break: break-word;
   }
 
   .session-meta {
-    margin-top: 1px;
+    margin-top: 3px;
     font: 400 11px/1.2 var(--sans);
     color: var(--text-tertiary);
-    white-space: nowrap; overflow: hidden; text-overflow: clip;
-    text-align: right;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-align: left;
+    width: 100%;
   }
 
   .header-actions {
@@ -661,8 +671,8 @@
       <div class="session-wrap">
         <div class="session-top">
           <div class="session-name">{{SESSION_NAME}}</div>
-          <div class="session-updated" id="status-text">--:--:--</div>
         </div>
+        <div class="session-updated" id="status-text">--:--:--</div>
         <div class="session-meta" id="cwd-label">Connecting…</div>
       </div>
     </header>
@@ -699,6 +709,9 @@
 
         <!-- Unified icon toolbar — single row -->
         <div class="toolbar-strip">
+          <button id="tts-test-btn" class="toolbar-icon" type="button" aria-label="Test voice">
+            <svg viewBox="0 0 24 24"><path d="M5 9v6"/><path d="M9 7v10"/><path d="M13 4v16"/><path d="M17 7v10"/><path d="M21 9v6"/></svg>
+          </button>
           <button id="image-btn" class="toolbar-icon" type="button" aria-label="Upload photo">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/><path d="M21 15l-5-5L5 21"/></svg>
           </button>
@@ -761,6 +774,7 @@
         </div>
 
         <input id="image-input" type="file" accept="image/*" multiple hidden>
+        <audio id="reply-audio" playsinline preload="auto" hidden></audio>
       </section>
     </div>
   </div>
@@ -800,6 +814,7 @@
   var imageBtn = document.getElementById('image-btn');
   var imageInput = document.getElementById('image-input');
   var hotMicBtn = document.getElementById('hot-mic-btn');
+  var ttsTestBtn = document.getElementById('tts-test-btn');
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
   var composerShell = document.querySelector('.composer-shell');
@@ -809,6 +824,7 @@
   var windowSheet = document.getElementById('window-sheet');
   var windowList = document.getElementById('window-list');
   var windowSheetClose = document.getElementById('window-sheet-close');
+  var replyAudio = document.getElementById('reply-audio');
   var lastText = "";
   var lastCursorY = null;
   var pollTimer = null;
@@ -847,6 +863,10 @@
   var bargeInNoiseFloor = 0.008;
   var bargeInVoiceFrames = 0;
   var lastMicActivationAt = 0;
+  var lastRecognitionResultAt = 0;
+  var statusResetTimer = null;
+  var replyAudioUnlocked = false;
+  var replyAudioUnlocking = false;
   var HOT_MIC_SILENCE_DELAY = 3000;
   var SPEECH_FOLLOWUP_DELAY = 900;
   var BARGE_IN_MONITOR_DELAY = 180;
@@ -854,6 +874,7 @@
   var BARGE_IN_MIN_LEVEL = 0.018;
   var BARGE_IN_TTS_MIN_LEVEL = 0.032;
   var BARGE_IN_TRIGGER_FRAMES = 3;
+  var SILENT_AUDIO_DATA_URI = 'data:audio/wav;base64,UklGRl4RAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YToRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 
   function isKeyboardOpen() {
     if (!window.visualViewport) return false;
@@ -912,22 +933,47 @@
   }
 
   function setUpdatedTime(timestamp) {
-    if (!statusText) return;
-    if (!timestamp) {
-      statusText.textContent = '--:--:--';
-      return;
-    }
-    statusText.textContent = new Date(timestamp).toLocaleTimeString([], {
-      hour: 'numeric',
-      minute: '2-digit',
-      second: '2-digit'
-    });
+    return;
   }
 
   function showStatus(message) {
     if (window.console && message) {
       console.debug(message);
     }
+    if (!statusText || !message) return;
+    clearTimeout(statusResetTimer);
+    statusText.textContent = message;
+    statusResetTimer = setTimeout(function() {
+      setUpdatedTime(Date.now());
+    }, 2400);
+  }
+
+  function postMobileLog(message, source) {
+    if (!message) return;
+    try {
+      fetch(sessionApi('/api/mobile-log/'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: source || 'mobile',
+          message: String(message)
+        })
+      }).catch(function() {});
+    } catch (err) {}
+  }
+
+  function debugSpeech(message) {
+    postMobileLog(message, 'audio');
+    showStatus(message);
+  }
+
+  function describeSpeechError(err) {
+    if (!err) return 'unknown error';
+    if (typeof err === 'string') return err;
+    if (err.name && err.message) return err.name + ': ' + err.message;
+    if (err.message) return err.message;
+    if (err.name) return err.name;
+    return String(err);
   }
 
   function stripAnsi(text) {
@@ -1303,15 +1349,23 @@
     setHotMicComposerView(true);
     autoResize();
 
+    function restartAfterBarge(delay) {
+      recognitionPausedForSpeech = false;
+      scheduleRecognitionRestart(delay);
+    }
+
     if (shouldInterruptTmux) {
+      restartAfterBarge(700);
       postJson(sessionApi('/api/send-keys/'), { key: 'Escape' })
         .then(function() {
           setTimeout(function() { fetchPane(true); }, 120);
-          scheduleRecognitionRestart(260);
+          restartAfterBarge(260);
         })
-        .catch(function() {});
+        .catch(function() {
+          restartAfterBarge(420);
+        });
     } else {
-      scheduleRecognitionRestart(220);
+      restartAfterBarge(220);
     }
 
     showStatus('Hot mic listening');
@@ -1493,8 +1547,24 @@
     speechQueue = [];
     speechPlaybackActive = false;
     speechPlaybackToken += 1;
+    if (replyAudio) {
+      replyAudio.onended = null;
+      replyAudio.onerror = null;
+      try {
+        replyAudio.pause();
+      } catch (err) {}
+      try {
+        replyAudio.currentTime = 0;
+      } catch (err) {}
+      try {
+        replyAudio.removeAttribute('src');
+        replyAudio.load();
+      } catch (err) {}
+    }
     if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch (err) {}
     }
   }
 
@@ -1517,30 +1587,167 @@
   }
 
   function primeSpeechSynthesis() {
-    if (!('speechSynthesis' in window) || speechPrimed) return;
+    if (speechPrimed) return;
     try {
-      refreshSpeechVoice();
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.resume();
-      var utterance = new SpeechSynthesisUtterance(' ');
-      utterance.volume = 0;
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      if (speechVoice) {
-        utterance.voice = speechVoice;
+      if (replyAudio) {
+        replyAudio.setAttribute('playsinline', '');
+        replyAudio.setAttribute('preload', 'auto');
+        replyAudio.playsInline = true;
       }
       speechPrimed = true;
-      window.speechSynthesis.speak(utterance);
-      window.setTimeout(function() {
-        window.speechSynthesis.cancel();
-      }, 0);
     } catch (err) {
       speechPrimed = false;
     }
   }
 
-  function playNextSpeechChunk() {
-    if (!hotMicEnabled) {
+  function cleanupReplyAudioUnlock() {
+    if (!replyAudio) return;
+    try {
+      replyAudio.pause();
+    } catch (err) {}
+    try {
+      replyAudio.currentTime = 0;
+    } catch (err) {}
+    try {
+      replyAudio.muted = false;
+    } catch (err) {}
+    try {
+      replyAudio.removeAttribute('src');
+      replyAudio.load();
+    } catch (err) {}
+  }
+
+  function unlockReplyAudio() {
+    primeSpeechSynthesis();
+    if (!replyAudio) {
+      return Promise.resolve(false);
+    }
+    if (replyAudioUnlocked) {
+      return Promise.resolve(true);
+    }
+    if (replyAudioUnlocking) {
+      return Promise.resolve(false);
+    }
+
+    replyAudioUnlocking = true;
+    try {
+      replyAudio.muted = true;
+      replyAudio.src = SILENT_AUDIO_DATA_URI;
+      replyAudio.load();
+      var playPromise = replyAudio.play();
+
+      if (playPromise && typeof playPromise.then === 'function') {
+        return playPromise.then(function() {
+          replyAudioUnlocked = true;
+          replyAudioUnlocking = false;
+          postMobileLog('reply audio unlocked', 'audio');
+          cleanupReplyAudioUnlock();
+          return true;
+        }).catch(function(err) {
+          replyAudioUnlocking = false;
+          postMobileLog('reply audio unlock failed: ' + describeSpeechError(err), 'audio');
+          cleanupReplyAudioUnlock();
+          return false;
+        });
+      }
+
+      replyAudioUnlocked = true;
+      replyAudioUnlocking = false;
+      postMobileLog('reply audio unlocked without promise', 'audio');
+      cleanupReplyAudioUnlock();
+      return Promise.resolve(true);
+    } catch (err) {
+      replyAudioUnlocking = false;
+      postMobileLog('reply audio unlock threw: ' + describeSpeechError(err), 'audio');
+      cleanupReplyAudioUnlock();
+      return Promise.resolve(false);
+    }
+  }
+
+  async function requestServerSpeechAsset(text) {
+    var res = await fetch(sessionApi('/api/tts-file/'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    });
+    var payload = {};
+    try {
+      payload = await res.json();
+    } catch (err) {}
+    if (!res.ok) {
+      throw new Error(payload && payload.error ? payload.error : ('HTTP ' + res.status));
+    }
+    if (!payload || !payload.url) {
+      throw new Error('Speech audio URL missing');
+    }
+    return payload;
+  }
+
+  function startServerSpeechPlayback(url, activeToken, options) {
+    var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
+    var retryAfterUnlock = !!(options && options.retryAfterUnlock);
+    if (!replyAudio) {
+      debugSpeech('Audio element unavailable');
+      speechPlaybackActive = false;
+      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+      return;
+    }
+
+    var settled = false;
+    function finish(message) {
+      if (settled || activeToken !== speechPlaybackToken) return;
+      settled = true;
+      replyAudio.onended = null;
+      replyAudio.onerror = null;
+      debugSpeech(message);
+      speechPlaybackActive = false;
+      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+    }
+
+    var playbackUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now();
+    replyAudio.onended = function() {
+      finish('Voice playback ended');
+    };
+    replyAudio.onerror = function() {
+      finish('Voice playback error: audio element error');
+    };
+
+    try {
+      replyAudio.src = playbackUrl;
+      replyAudio.load();
+      var playPromise = replyAudio.play();
+      debugSpeech('Voice playback started');
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(function(err) {
+          var errorText = describeSpeechError(err);
+          if (retryAfterUnlock &&
+              /NotAllowedError/i.test(errorText) &&
+              !replyAudioUnlocked &&
+              activeToken === speechPlaybackToken) {
+            unlockReplyAudio().then(function(unlocked) {
+              if (activeToken !== speechPlaybackToken) return;
+              if (unlocked) {
+                startServerSpeechPlayback(url, activeToken, {
+                  allowWithoutHotMic: allowWithoutHotMic,
+                  retryAfterUnlock: false
+                });
+                return;
+              }
+              finish('Voice play blocked: ' + errorText);
+            });
+            return;
+          }
+          finish('Voice play blocked: ' + errorText);
+        });
+      }
+    } catch (err) {
+      finish('Voice play blocked: ' + describeSpeechError(err));
+    }
+  }
+
+  async function playNextSpeechChunk(options) {
+    var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
+    if (!hotMicEnabled && !allowWithoutHotMic) {
       stopSpeechPlayback();
       return;
     }
@@ -1558,34 +1765,44 @@
     speechPlaybackActive = true;
     pauseRecognitionForSpeech();
     var activeToken = speechPlaybackToken;
-    var utterance = new SpeechSynthesisUtterance(speechQueue.shift());
-    utterance.lang = navigator.language || 'en-US';
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    utterance.volume = 1;
-    if (speechVoice) {
-      utterance.voice = speechVoice;
+    var speechText = speechQueue.shift();
+    if (!speechText) {
+      speechPlaybackActive = false;
+      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+      return;
     }
-    utterance.onend = function() {
-      if (activeToken !== speechPlaybackToken) {
-        return;
-      }
-      speechPlaybackActive = false;
-      playNextSpeechChunk();
-    };
-    utterance.onerror = function() {
-      if (activeToken !== speechPlaybackToken) {
-        return;
-      }
-      speechPlaybackActive = false;
-      playNextSpeechChunk();
-    };
 
-    window.speechSynthesis.speak(utterance);
+    try {
+      debugSpeech('Generating voice audio');
+      var asset = await requestServerSpeechAsset(speechText);
+      if (activeToken !== speechPlaybackToken) {
+        return;
+      }
+      debugSpeech('Voice audio received');
+      startServerSpeechPlayback(asset.url, activeToken, {
+        allowWithoutHotMic: allowWithoutHotMic,
+        retryAfterUnlock: true
+      });
+    } catch (err) {
+      if (activeToken !== speechPlaybackToken) {
+        return;
+      }
+      debugSpeech('Voice playback error: ' + describeSpeechError(err));
+      speechPlaybackActive = false;
+      playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
+    }
+  }
+
+  function playVoiceTest() {
+    unlockReplyAudio();
+    stopSpeechPlayback();
+    speechQueue = ['hello this is an audio test'];
+    speechPlaybackActive = false;
+    playNextSpeechChunk({ allowWithoutHotMic: true });
   }
 
   function speakText(text) {
-    if (!text || !('speechSynthesis' in window)) return;
+    if (!text) return;
 
     var chunks = splitForSpeech(text);
     if (!chunks.length) return;
@@ -1647,7 +1864,7 @@
   }
 
   function scheduleSpeechFromPane(nextText) {
-    if (!hotMicEnabled || !speechAwaitingReply || !('speechSynthesis' in window)) return;
+    if (!hotMicEnabled || !speechAwaitingReply) return;
     speechReplyLatestText = nextText || '';
     speakPendingReplyDelta();
   }
@@ -1722,9 +1939,12 @@
     }
     var now = Date.now();
     if (now - lastMicActivationAt < 320) {
+      postMobileLog('activateMic ignored as duplicate tap', 'mic');
       return;
     }
     lastMicActivationAt = now;
+    postMobileLog('activateMic toggling hot mic to ' + (!hotMicEnabled), 'mic');
+    unlockReplyAudio();
     handleMicButtonTap();
   }
 
@@ -2205,7 +2425,9 @@
     recognition.onstart = function() {
       suppressInputFocusAfterMicStop = false;
       recognitionBaseText = input.value;
+      lastRecognitionResultAt = 0;
       setMicState(true);
+      postMobileLog('recognition.onstart', 'mic');
       showStatus(hotMicEnabled ? 'Hot mic listening' : 'Listening…');
     };
 
@@ -2218,6 +2440,11 @@
         transcript += event.results[i][0].transcript;
       }
       transcript = transcript.trim();
+      if (transcript) {
+        lastRecognitionResultAt = Date.now();
+        postMobileLog('recognition.onresult ' + transcript, 'mic');
+        showStatus('Heard: ' + transcript);
+      }
       input.value = mergeTranscriptWithBaseText(recognitionBaseText, transcript);
       if (hotMicEnabled) {
         setHotMicComposerView(true);
@@ -2231,6 +2458,7 @@
     recognition.onerror = function(event) {
       setMicState(false);
       var errorCode = event && event.error ? event.error : '';
+      postMobileLog('recognition.onerror ' + (errorCode || 'unknown'), 'mic');
       if (suppressInputFocusAfterMicStop) {
         showStatus('Hot mic off');
         return;
@@ -2249,7 +2477,13 @@
         if (!recognitionPausedForSpeech) {
           scheduleRecognitionRestart(350);
         }
-        showStatus(errorCode === 'no-speech' ? 'Hot mic waiting' : 'Hot mic listening');
+        if (errorCode === 'no-speech') {
+          showStatus('Hot mic waiting');
+        } else if (errorCode) {
+          showStatus('Hot mic error: ' + errorCode);
+        } else {
+          showStatus('Hot mic listening');
+        }
         return;
       }
       showStatus('Mic unavailable here');
@@ -2258,6 +2492,13 @@
 
     recognition.onend = function() {
       setMicState(false);
+      postMobileLog(
+        'recognition.onend awaiting=' + speechAwaitingReply +
+        ' paused=' + recognitionPausedForSpeech +
+        ' hot=' + hotMicEnabled +
+        ' heard=' + !!lastRecognitionResultAt,
+        'mic'
+      );
       if (speechAwaitingReply) {
         scheduleBargeInMonitorStart();
         showStatus('Waiting for reply');
@@ -2272,7 +2513,11 @@
         return;
       }
       if (hotMicEnabled) {
-        showStatus('Hot mic listening');
+        if (!lastRecognitionResultAt) {
+          showStatus('Hot mic ended before transcript');
+        } else {
+          showStatus('Hot mic listening');
+        }
         scheduleRecognitionRestart(250);
         return;
       }
@@ -2361,6 +2606,11 @@
   }
 
   sendBtn.addEventListener('click', function() { sendText(true); });
+  if (ttsTestBtn) {
+    ttsTestBtn.addEventListener('click', function() {
+      playVoiceTest();
+    });
+  }
   if (hotMicBtn) {
     hotMicBtn.addEventListener('pointerup', activateMic);
     hotMicBtn.addEventListener('click', function(event) {
