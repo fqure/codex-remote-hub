@@ -875,6 +875,7 @@
   var recognitionListening = false;
   var hotMicEnabled = false;
   var hotMicSendTimer = null;
+  var hotMicPendingVoiceCommand = null;
   var hotMicComposerView = false;
   var speechTimer = null;
   var speechQueue = [];
@@ -924,7 +925,7 @@
     'stop, cancel, wait, hold, or quiet',
     '',
     'Icon Commands:',
-    'Add Photo, Take Screenshot, Take Window Screenshot, Show Clipboard, Go Page up, Go Page Down, Go Page End'
+    'Add Photo, Take Screenshot, Take Window Screenshot, Show Clipboard, Go Page up, Go Page Down, Page Bottom'
   ].join('\n');
   var SILENT_AUDIO_DATA_URI = 'data:audio/wav;base64,UklGRl4RAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YToRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 
@@ -1415,6 +1416,7 @@
     recognitionRestartTimer = null;
     pendingSubmittedText = '';
     pendingInputSnapshot = '';
+    hotMicPendingVoiceCommand = null;
     recognitionBaseText = '';
     input.value = '';
     renderImagePreviews();
@@ -1935,6 +1937,10 @@
     clearTimeout(hotMicSendTimer);
     hotMicSendTimer = setTimeout(function() {
       if (!hotMicEnabled) return;
+      if (hotMicPendingVoiceCommand) {
+        runVoiceToolbarCommand(hotMicPendingVoiceCommand);
+        return;
+      }
       if (!input.value.trim()) return;
       sendText(true);
     }, HOT_MIC_SILENCE_DELAY);
@@ -1962,6 +1968,7 @@
 
     if (enabled) {
       speechHardStopped = false;
+      hotMicPendingVoiceCommand = null;
       hotMicAwaitingFreshUtterance = false;
       hotMicIgnoreResultsUntil = 0;
       resetSpeechReplyTracking();
@@ -1977,6 +1984,7 @@
       startRecognition();
     } else {
       speechHardStopped = false;
+      hotMicPendingVoiceCommand = null;
       hotMicAwaitingFreshUtterance = false;
       hotMicIgnoreResultsUntil = 0;
       suppressInputFocusAfterMicStop = true;
@@ -2115,6 +2123,16 @@
     input.focus();
   }
 
+  function resolveAssetPublicUrl(asset) {
+    if (asset && asset.url) {
+      if (/^https?:\/\//i.test(asset.url)) {
+        return asset.url;
+      }
+      return window.location.origin + asset.url;
+    }
+    return asset && asset.public_url ? asset.public_url : '';
+  }
+
   function extractImageUrls(text) {
     var matches = (text || '').match(/https?:\/\/[^\s<>"']+\.(?:png|jpe?g|gif|webp|bmp)(?:\?[^\s<>"']*)?/gi) || [];
     var seen = Object.create(null);
@@ -2207,11 +2225,16 @@
         body: JSON.stringify({ mode: mode })
       });
       var data = await res.json();
-      if (!res.ok || !data.ok || !data.screenshot || !data.screenshot.public_url) {
+      if (!res.ok || !data.ok || !data.screenshot) {
         showStatus((data && data.error) || 'Screenshot failed');
         return;
       }
-      insertComposerText(data.screenshot.public_url);
+      var screenshotUrl = resolveAssetPublicUrl(data.screenshot);
+      if (!screenshotUrl) {
+        showStatus('Screenshot URL unavailable');
+        return;
+      }
+      insertComposerText(screenshotUrl);
       showStatus('Screenshot URL inserted');
     } catch (err) {
       showStatus('Screenshot failed');
@@ -2311,12 +2334,17 @@
         body: JSON.stringify({ mode: 'window', window_id: windowId })
       });
       var data = await res.json();
-      if (!res.ok || !data.ok || !data.screenshot || !data.screenshot.public_url) {
+      if (!res.ok || !data.ok || !data.screenshot) {
         showStatus((data && data.error) || 'Window screenshot failed');
         return;
       }
       setWindowSheetOpen(false);
-      insertComposerText(data.screenshot.public_url);
+      var windowShotUrl = resolveAssetPublicUrl(data.screenshot);
+      if (!windowShotUrl) {
+        showStatus('Window screenshot URL unavailable');
+        return;
+      }
+      insertComposerText(windowShotUrl);
       showStatus('Window screenshot URL inserted');
     } catch (err) {
       showStatus('Window screenshot failed');
@@ -2337,9 +2365,96 @@
       .trim();
   }
 
+  function voiceCommandTokens(text) {
+    return normalizeVoiceCommand(text).split(' ').filter(Boolean);
+  }
+
+  function voiceCommandHasWord(tokens, word) {
+    return tokens.indexOf(word) >= 0;
+  }
+
+  function voiceCommandHasAny(tokens, words) {
+    for (var i = 0; i < words.length; i += 1) {
+      if (voiceCommandHasWord(tokens, words[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function voiceCommandTokensWithin(tokens, allowed) {
+    for (var i = 0; i < tokens.length; i += 1) {
+      if (allowed.indexOf(tokens[i]) < 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   function detectVoiceToolbarCommand(text) {
-    var normalized = normalizeVoiceCommand(text);
-    if (!normalized) return null;
+    var tokens = voiceCommandTokens(text);
+    if (!tokens.length) return null;
+    var hasScreenshot = voiceCommandHasAny(tokens, ['screenshot', 'screen']);
+    var hasWindow = voiceCommandHasWord(tokens, 'window');
+    var hasPhoto = voiceCommandHasAny(tokens, ['photo', 'image', 'picture']);
+    var hasClipboard = voiceCommandHasWord(tokens, 'clipboard');
+    var hasPage = voiceCommandHasWord(tokens, 'page');
+    var hasGo = voiceCommandHasWord(tokens, 'go');
+    var hasUp = voiceCommandHasWord(tokens, 'up');
+    var hasDown = voiceCommandHasWord(tokens, 'down');
+    var hasBottom = voiceCommandHasWord(tokens, 'bottom');
+
+    if (hasScreenshot && hasWindow &&
+        voiceCommandTokensWithin(tokens, ['take', 'takes', 'window', 'screenshot', 'screen', 'capture'])) {
+      return {
+        label: 'Take Window Screenshot',
+        run: function() { return triggerToolbarButton(windowShotBtn); }
+      };
+    }
+    if (hasScreenshot &&
+        voiceCommandTokensWithin(tokens, ['take', 'takes', 'screenshot', 'screen', 'desktop', 'capture'])) {
+      return {
+        label: 'Take Screenshot',
+        run: function() { return triggerToolbarButton(screenShotBtn); }
+      };
+    }
+    if (hasPhoto &&
+        voiceCommandTokensWithin(tokens, ['add', 'upload', 'photo', 'image', 'picture'])) {
+      return {
+        label: 'Add Photo',
+        run: function() { return triggerToolbarButton(imageBtn); }
+      };
+    }
+    if (hasClipboard &&
+        voiceCommandTokensWithin(tokens, ['show', 'paste', 'clipboard'])) {
+      return {
+        label: 'Show Clipboard',
+        run: function() { return triggerToolbarButton(clipboardBtn); }
+      };
+    }
+    if ((hasPage || hasGo) && hasUp &&
+        voiceCommandTokensWithin(tokens, ['go', 'page', 'scroll', 'up'])) {
+      return {
+        label: 'Go Page Up',
+        run: function() { return triggerToolbarButton(pageUpBtn); }
+      };
+    }
+    if ((hasPage || hasGo) && hasDown &&
+        voiceCommandTokensWithin(tokens, ['go', 'page', 'scroll', 'down'])) {
+      return {
+        label: 'Go Page Down',
+        run: function() { return triggerToolbarButton(pageDownBtn); }
+      };
+    }
+    if ((hasPage || hasGo || hasBottom) && hasBottom &&
+        voiceCommandTokensWithin(tokens, ['go', 'page', 'scroll', 'bottom'])) {
+      return {
+        label: 'Page Bottom',
+        run: function() { return triggerToolbarButton(pageEndBtn); }
+      };
+    }
+
+    var normalized = tokens.join(' ');
     var commands = [
       {
         phrases: ['add photo', 'upload photo'],
@@ -2372,8 +2487,8 @@
         run: function() { return triggerToolbarButton(pageDownBtn); }
       },
       {
-        phrases: ['go page end', 'page end'],
-        label: 'Go Page End',
+        phrases: ['page bottom', 'go page bottom', 'scroll bottom'],
+        label: 'Page Bottom',
         run: function() { return triggerToolbarButton(pageEndBtn); }
       }
     ];
@@ -2389,6 +2504,7 @@
     if (!command || typeof command.run !== 'function') return;
     clearTimeout(hotMicSendTimer);
     hotMicSendTimer = null;
+    hotMicPendingVoiceCommand = null;
     input.value = '';
     renderImagePreviews();
     autoResize();
@@ -2651,13 +2767,19 @@
         postMobileLog('recognition.onresult ' + transcript, 'mic');
         showStatus('Heard: ' + transcript);
       }
-      if (hotMicEnabled && transcript && hasFinalResult) {
-        var voiceCommand = detectVoiceToolbarCommand(transcript);
-        if (voiceCommand) {
-          runVoiceToolbarCommand(voiceCommand);
+      if (hotMicEnabled && transcript) {
+        var pendingCommand = detectVoiceToolbarCommand(transcript);
+        if (pendingCommand) {
+          hotMicPendingVoiceCommand = pendingCommand;
+          input.value = '';
+          renderImagePreviews();
+          autoResize();
+          showStatus('Voice command ready: ' + pendingCommand.label);
+          scheduleHotMicSend();
           return;
         }
       }
+      hotMicPendingVoiceCommand = null;
       input.value = mergeTranscriptWithBaseText(recognitionBaseText, transcript);
       if (hotMicEnabled) {
         setHotMicComposerView(true);
