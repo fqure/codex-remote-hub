@@ -890,6 +890,7 @@
 
   function isComposerExpanded() {
     return (
+      hotMicEnabled ||
       hotMicComposerView ||
       document.body.classList.contains('input-focus')
     );
@@ -1531,6 +1532,7 @@
     stopBargeInMonitor();
     speechPlaybackActive = false;
     recognitionPausedForSpeech = false;
+    setHotMicComposerView(true);
     scheduleRecognitionRestart(220);
   }
 
@@ -2380,7 +2382,7 @@
         input.value = '';
         renderImagePreviews();
         document.body.classList.remove('input-focus');
-        setHotMicComposerView(false);
+        setHotMicComposerView(true);
         autoResize();
         scrollPane('end');
       }
@@ -2427,6 +2429,9 @@
       recognitionBaseText = input.value;
       lastRecognitionResultAt = 0;
       setMicState(true);
+      if (hotMicEnabled) {
+        setHotMicComposerView(true);
+      }
       postMobileLog('recognition.onstart', 'mic');
       showStatus(hotMicEnabled ? 'Hot mic listening' : 'Listening…');
     };
