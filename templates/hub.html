@@ -77,25 +77,29 @@
   }
 
   .logo-prompt {
-    color: var(--accent);
+    color: var(--text-dim);
+    margin-right: 2px;
   }
 
   .logo-text {
-    background: linear-gradient(135deg, var(--accent), #F59E0B);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--text);
   }
+
+  .logo-text .char-codex { color: var(--codex); }
+  .logo-text .char-claude { color: var(--claude); }
 
   .logo-cursor {
     display: inline-block;
     width: 2px;
     height: 20px;
-    background: var(--accent);
-    margin-left: 2px;
-    animation: blink 1s step-end infinite;
+    background: var(--text-dim);
+    margin-left: 1px;
     vertical-align: text-bottom;
   }
+  .logo-cursor.typing { animation: none; opacity: 1; }
+  .logo-cursor.idle { animation: blink 1s step-end infinite; }
 
   @keyframes blink {
     0%, 100% { opacity: 1; }
@@ -890,7 +894,7 @@
   </div>
   <div class="header">
     <span class="logo">
-      <span class="logo-prompt">&gt;_ </span><span class="logo-text">remote hub</span><span class="logo-cursor"></span>
+      <span class="logo-prompt">&gt;_</span><span class="logo-text" id="logo-text">hub_</span><span class="logo-cursor idle" id="logo-cursor"></span>
     </span>
     <span class="counter">{{COUNT_TEXT}}</span>
     <hr class="header-rule">
@@ -902,9 +906,8 @@
     var text = el.textContent.trim();
     var m = text.match(/^(\d+)\s+(.*)$/);
     if (m) {
-      var label = m[2].replace(/sessions?/i, function(match) {
-        return match.toLowerCase() === 'session' ? 'active session' : 'active sessions';
-      });
+      var count = parseInt(m[1], 10) || 0;
+      var label = count === 1 ? 'active hub session' : 'active hub sessions';
       el.innerHTML = '<span class="subtitle-count">' + m[1] + '</span> ' + label;
     }
   })();
@@ -921,7 +924,7 @@
   </div>
 
   <div class="capture-section" id="saved-section" style="display:none;">
-    <label class="form-label">Saved Threads</label>
+    <label class="form-label">Available Threads</label>
     <div id="saved-projects"></div>
   </div>
 
@@ -1258,7 +1261,7 @@
 
         var badge = document.createElement('span');
         badge.className = 'capture-badge';
-        badge.textContent = 'capture';
+        badge.textContent = s.session_id ? 'continue' : 'capture';
 
         var arrow = document.createElement('span');
         arrow.className = 'arrow';
@@ -1326,7 +1329,7 @@
 
         var badge = document.createElement('span');
         badge.className = 'capture-badge';
-        badge.textContent = 'resume';
+        badge.textContent = 'continue';
 
         var arrow = document.createElement('span');
         arrow.className = 'arrow';
@@ -1465,6 +1468,80 @@
         resetPTR();
       }
     });
+  })();
+
+  // ── Logo typing animation: hub_claude ↔ hub_codex ──
+  (function() {
+    var el = document.getElementById('logo-text');
+    var cursor = document.getElementById('logo-cursor');
+    if (!el || !cursor) return;
+
+    var wordA = 'claude';
+    var wordB = 'codex';
+    var classA = 'char-claude';
+    var classB = 'char-codex';
+    var prefix = 'hub_';
+    var typingSpeed = 110;
+    var deleteSpeed = 80;
+    var pauseAfterType = 3500;
+    var pauseAfterDelete = 400;
+    var currentWord = wordA;
+    var currentClass = classA;
+    var nextWord = wordB;
+    var nextClass = classB;
+
+    function renderWord(word, charClass, len) {
+      var html = prefix;
+      for (var i = 0; i < len; i++) {
+        html += '<span class="' + charClass + '">' + word[i] + '</span>';
+      }
+      el.innerHTML = html;
+    }
+
+    function setCursorTyping(on) {
+      cursor.className = 'logo-cursor ' + (on ? 'typing' : 'idle');
+    }
+
+    // Initial render
+    renderWord(currentWord, currentClass, currentWord.length);
+    setCursorTyping(false);
+
+    function runCycle() {
+      var delIdx = currentWord.length;
+
+      // Phase 1: delete current word one char at a time
+      function deleteChar() {
+        if (delIdx <= 0) {
+          setTimeout(typeChar, pauseAfterDelete);
+          return;
+        }
+        setCursorTyping(true);
+        delIdx--;
+        renderWord(currentWord, currentClass, delIdx);
+        setTimeout(deleteChar, deleteSpeed);
+      }
+
+      // Phase 2: type next word one char at a time
+      var typeIdx = 0;
+      function typeChar() {
+        if (typeIdx >= nextWord.length) {
+          setCursorTyping(false);
+          // Swap for next cycle
+          var tmpW = currentWord; currentWord = nextWord; nextWord = tmpW;
+          var tmpC = currentClass; currentClass = nextClass; nextClass = tmpC;
+          setTimeout(runCycle, pauseAfterType);
+          return;
+        }
+        typeIdx++;
+        renderWord(nextWord, nextClass, typeIdx);
+        setTimeout(typeChar, typingSpeed);
+      }
+
+      setTimeout(deleteChar, pauseAfterType);
+    }
+
+    // Start first cycle after initial pause
+    setTimeout(runCycle, 2000);
   })();
 </script>
 </body>
