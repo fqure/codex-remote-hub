@@ -670,6 +670,32 @@
   body.keyboard-open .main { padding-top: 4px; }
   body.keyboard-open .pane-wrap { padding: 8px 10px; }
   body.keyboard-open .composer-shell { padding-top: 0; padding-bottom: 0; }
+  body.keyboard-open.input-focus .main,
+  body.keyboard-open.hot-mic-compose .main {
+    flex: 0 0 22%;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+  body.keyboard-open.input-focus .composer-shell,
+  body.keyboard-open.hot-mic-compose .composer-shell {
+    flex: 1 1 auto;
+    padding: 2px 10px calc(env(safe-area-inset-bottom) + var(--keyboard-bottom-inset, 8px) + 6px);
+  }
+  body.keyboard-open.input-focus .composer,
+  body.keyboard-open.hot-mic-compose .composer {
+    min-height: 0;
+    height: 100%;
+  }
+  body.keyboard-open.input-focus .pane-wrap,
+  body.keyboard-open.hot-mic-compose .pane-wrap {
+    padding: 6px 10px;
+  }
+  body.keyboard-open.input-focus .session-updated,
+  body.keyboard-open.hot-mic-compose .session-updated {
+    margin-top: 1px;
+    font-size: 11px;
+    line-height: 1.2;
+  }
 
   .tablet-grid { display: contents; }
 
@@ -957,10 +983,18 @@
 
   function syncViewportHeight() {
     var keyboardOpen = isKeyboardOpen();
+    var bottomInset = 0;
     var height = keyboardOpen && window.visualViewport
       ? window.visualViewport.height
       : window.innerHeight;
+    if (keyboardOpen && window.visualViewport) {
+      bottomInset = Math.max(
+        0,
+        window.innerHeight - (window.visualViewport.height + window.visualViewport.offsetTop)
+      );
+    }
     document.documentElement.style.setProperty('--app-height', Math.round(height) + 'px');
+    document.documentElement.style.setProperty('--keyboard-bottom-inset', Math.round(bottomInset) + 'px');
     document.body.classList.toggle('keyboard-open', keyboardOpen);
     syncHotMicComposerView();
     if (composerShell) {
@@ -969,6 +1003,9 @@
     window.scrollTo(0, 0);
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
+    if (keyboardOpen && document.body.classList.contains('input-focus') && composerShell) {
+      composerShell.scrollIntoView({ block: 'end', inline: 'nearest' });
+    }
   }
 
   function autoResize() {
@@ -2667,6 +2704,15 @@
         renderImagePreviews();
         document.body.classList.remove('input-focus');
         setHotMicComposerView(true);
+        autoResize();
+        scrollPane('end');
+      } else {
+        input.value = '';
+        renderImagePreviews();
+        if (document.activeElement === input) {
+          input.blur();
+        }
+        document.body.classList.remove('input-focus');
         autoResize();
         scrollPane('end');
       }
