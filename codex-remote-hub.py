@@ -1880,10 +1880,10 @@ def start_session(
         if safe_agent == AGENT_CLAUDE:
             cmd.append(binary)
             if session_id:
-                cmd += ["--resume", session_id, "--fork-session"]
+                cmd += ["--resume", session_id]
         else:
             if session_id:
-                cmd += [binary, "fork", session_id]
+                cmd += [binary, "resume", session_id]
             else:
                 cmd.append(binary)
         if skip_permissions:
@@ -1895,6 +1895,10 @@ def start_session(
             env=clean_env
         )
         time.sleep(0.5)
+        r = subprocess.run([TMUX_BIN, "has-session", "-t", session], capture_output=True)
+        if r.returncode != 0:
+            action = "continue" if session_id else "start"
+            raise RuntimeError(f"Failed to {action} {_agent_spec(safe_agent)['label']} session")
         subprocess.run([TMUX_BIN, "set-option", "-t", session, "mouse", "on"],
                        capture_output=True)
 
@@ -1939,12 +1943,12 @@ def capture_session(
     if safe_agent == AGENT_CLAUDE:
         cmd.append(binary)
         if session_id:
-            cmd += ["--resume", session_id, "--fork-session"]
+            cmd += ["--resume", session_id]
         else:
             cmd.append("--continue")
     else:
         if session_id:
-            cmd += [binary, "fork", session_id]
+            cmd += [binary, "resume", session_id]
         else:
             cmd += [binary, "resume", "--last"]
     if skip_permissions:
@@ -1959,18 +1963,7 @@ def capture_session(
                        capture_output=True)
     if r.returncode != 0:
         if session_id:
-            cmd_fallback = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
-            if cwd and os.path.isdir(cwd):
-                cmd_fallback += ["-c", cwd]
-            if safe_agent == AGENT_CLAUDE:
-                cmd_fallback += [binary, "--continue"]
-            else:
-                cmd_fallback += [binary, "resume", "--last"]
-            if skip_permissions:
-                cmd_fallback.append(_agent_spec(safe_agent)["skip_flag"])
-            subprocess.Popen(cmd_fallback, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, env=clean_env)
-            time.sleep(1.0)
+            raise RuntimeError(f"Failed to continue {_agent_spec(safe_agent)['label']} thread")
 
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
