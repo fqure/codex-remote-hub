@@ -591,6 +591,24 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
+  .voice-command-editor {
+    width: 100%;
+    min-height: 220px;
+    flex: 1 1 auto;
+    resize: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-dim);
+    color: var(--text);
+    padding: 12px;
+    font: 400 14px/1.5 var(--mono);
+    outline: none;
+    box-shadow: inset 0 1px 2px rgba(45,41,38,0.04);
+  }
+  .voice-command-editor::placeholder {
+    color: var(--text-tertiary);
+  }
+
   /* ── Icon sizing helper ── */
   .icon-action-btn {
     padding: 0 !important;
@@ -709,31 +727,31 @@
 
         <!-- Unified icon toolbar — single row -->
         <div class="toolbar-strip">
-          <button id="tts-test-btn" class="toolbar-icon" type="button" aria-label="Test voice">
+          <button id="voice-commands-btn" class="toolbar-icon" type="button" aria-label="Voice commands">
             <svg viewBox="0 0 24 24"><path d="M5 9v6"/><path d="M9 7v10"/><path d="M13 4v16"/><path d="M17 7v10"/><path d="M21 9v6"/></svg>
           </button>
           <button id="image-btn" class="toolbar-icon" type="button" aria-label="Upload photo">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/><path d="M21 15l-5-5L5 21"/></svg>
           </button>
-          <button class="toolbar-icon" data-shot="screen" type="button" aria-label="Desktop screenshot">
+          <button id="screen-shot-btn" class="toolbar-icon" data-shot="screen" type="button" aria-label="Desktop screenshot">
             <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
           </button>
-          <button class="toolbar-icon" data-shot="window" type="button" aria-label="Window screenshot">
+          <button id="window-shot-btn" class="toolbar-icon" data-shot="window" type="button" aria-label="Window screenshot">
             <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><circle cx="6.5" cy="6" r="0.8" fill="currentColor" stroke="none"/><circle cx="9" cy="6" r="0.8" fill="currentColor" stroke="none"/><circle cx="11.5" cy="6" r="0.8" fill="currentColor" stroke="none"/></svg>
           </button>
-          <button class="toolbar-icon" data-action="paste" type="button" aria-label="Paste">
+          <button id="clipboard-btn" class="toolbar-icon" data-action="paste" type="button" aria-label="Paste">
             <svg viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
           </button>
           <button class="toolbar-icon" data-key="Escape" type="button" aria-label="Escape">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/></svg>
           </button>
-          <button class="toolbar-icon" data-scroll="up" type="button" aria-label="Page up">
+          <button id="page-up-btn" class="toolbar-icon" data-scroll="up" type="button" aria-label="Page up">
             <svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
           </button>
-          <button class="toolbar-icon" data-scroll="down" type="button" aria-label="Page down">
+          <button id="page-down-btn" class="toolbar-icon" data-scroll="down" type="button" aria-label="Page down">
             <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
           </button>
-          <button class="toolbar-icon" data-scroll="end" type="button" aria-label="Scroll to end">
+          <button id="page-end-btn" class="toolbar-icon" data-scroll="end" type="button" aria-label="Scroll to end">
             <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" fill="none"/><path d="M10 12l6 6"/><path d="M16 15v3h-3"/></svg>
           </button>
         </div>
@@ -792,6 +810,16 @@
     </div>
   </div>
 
+  <div class="window-sheet hidden" id="voice-command-sheet" aria-hidden="true">
+    <div class="window-sheet-card">
+      <div class="window-sheet-head">
+        <div class="window-sheet-title">Voice Commands</div>
+        <button id="voice-command-sheet-close" class="window-sheet-close" type="button" aria-label="Close voice commands">✕</button>
+      </div>
+      <textarea id="voice-command-editor" class="voice-command-editor" spellcheck="false" autocapitalize="sentences"></textarea>
+    </div>
+  </div>
+
 <script>
   var SESSION = "{{SESSION_NAME}}";
   var SESSION_PRODUCT = "{{SESSION_PRODUCT}}";
@@ -814,7 +842,13 @@
   var imageBtn = document.getElementById('image-btn');
   var imageInput = document.getElementById('image-input');
   var hotMicBtn = document.getElementById('hot-mic-btn');
-  var ttsTestBtn = document.getElementById('tts-test-btn');
+  var voiceCommandsBtn = document.getElementById('voice-commands-btn');
+  var screenShotBtn = document.getElementById('screen-shot-btn');
+  var windowShotBtn = document.getElementById('window-shot-btn');
+  var clipboardBtn = document.getElementById('clipboard-btn');
+  var pageUpBtn = document.getElementById('page-up-btn');
+  var pageDownBtn = document.getElementById('page-down-btn');
+  var pageEndBtn = document.getElementById('page-end-btn');
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
   var composerShell = document.querySelector('.composer-shell');
@@ -824,6 +858,9 @@
   var windowSheet = document.getElementById('window-sheet');
   var windowList = document.getElementById('window-list');
   var windowSheetClose = document.getElementById('window-sheet-close');
+  var voiceCommandSheet = document.getElementById('voice-command-sheet');
+  var voiceCommandEditor = document.getElementById('voice-command-editor');
+  var voiceCommandSheetClose = document.getElementById('voice-command-sheet-close');
   var replyAudio = document.getElementById('reply-audio');
   var lastText = "";
   var lastCursorY = null;
@@ -880,6 +917,15 @@
   var BARGE_IN_TRIGGER_FRAMES = 3;
   var BARGE_KEYWORD_PATTERN = /\b(stop|cancel|wait|hold|quiet)\b/i;
   var HOT_MIC_BARGE_RESET_DELAY = 700;
+  var VOICE_COMMANDS_STORAGE_KEY = 'codex-mobile-voice-commands-note';
+  var DEFAULT_VOICE_COMMANDS_TEXT = [
+    'VOICE COMMANDS',
+    'Barge:',
+    'stop, cancel, wait, hold, or quiet',
+    '',
+    'Icon Commands:',
+    'Add Photo, Take Screenshot, Take Window Screenshot, Show Clipboard, Go Page up, Go Page Down, Go Page End'
+  ].join('\n');
   var SILENT_AUDIO_DATA_URI = 'data:audio/wav;base64,UklGRl4RAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YToRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 
   function isKeyboardOpen() {
@@ -1808,14 +1854,6 @@
     }
   }
 
-  function playVoiceTest() {
-    unlockReplyAudio();
-    stopSpeechPlayback();
-    speechQueue = ['hello this is an audio test'];
-    speechPlaybackActive = false;
-    playNextSpeechChunk({ allowWithoutHotMic: true });
-  }
-
   function speakText(text) {
     if (!text) return;
     if (speechHardStopped) return;
@@ -2221,6 +2259,34 @@
     document.body.classList.toggle('window-sheet-open', open);
   }
 
+  function setVoiceCommandSheetOpen(open) {
+    if (!voiceCommandSheet) return;
+    voiceCommandSheet.classList.toggle('hidden', !open);
+    voiceCommandSheet.setAttribute('aria-hidden', open ? 'false' : 'true');
+    document.body.classList.toggle('window-sheet-open', open);
+    if (open && voiceCommandEditor) {
+      setTimeout(function() {
+        voiceCommandEditor.focus();
+        voiceCommandEditor.setSelectionRange(voiceCommandEditor.value.length, voiceCommandEditor.value.length);
+      }, 20);
+    }
+  }
+
+  function loadVoiceCommandsNote() {
+    var value = DEFAULT_VOICE_COMMANDS_TEXT;
+    try {
+      value = localStorage.getItem(VOICE_COMMANDS_STORAGE_KEY) || DEFAULT_VOICE_COMMANDS_TEXT;
+    } catch (err) {}
+    if (voiceCommandEditor) {
+      voiceCommandEditor.value = value;
+    }
+  }
+
+  function openVoiceCommandSheet() {
+    loadVoiceCommandsNote();
+    setVoiceCommandSheetOpen(true);
+  }
+
   async function openWindowPicker() {
     setWindowSheetOpen(true);
     renderWindowChoices(cachedWindows);
@@ -2255,6 +2321,80 @@
     } catch (err) {
       showStatus('Window screenshot failed');
     }
+  }
+
+  function triggerToolbarButton(button) {
+    if (!button) return false;
+    button.click();
+    return true;
+  }
+
+  function normalizeVoiceCommand(text) {
+    return normalizeSpeechText(text || '')
+      .toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function detectVoiceToolbarCommand(text) {
+    var normalized = normalizeVoiceCommand(text);
+    if (!normalized) return null;
+    var commands = [
+      {
+        phrases: ['add photo', 'upload photo'],
+        label: 'Add Photo',
+        run: function() { return triggerToolbarButton(imageBtn); }
+      },
+      {
+        phrases: ['take screenshot', 'take screen screenshot', 'desktop screenshot'],
+        label: 'Take Screenshot',
+        run: function() { return triggerToolbarButton(screenShotBtn); }
+      },
+      {
+        phrases: ['take window screenshot', 'window screenshot'],
+        label: 'Take Window Screenshot',
+        run: function() { return triggerToolbarButton(windowShotBtn); }
+      },
+      {
+        phrases: ['show clipboard', 'paste clipboard'],
+        label: 'Show Clipboard',
+        run: function() { return triggerToolbarButton(clipboardBtn); }
+      },
+      {
+        phrases: ['go page up', 'page up'],
+        label: 'Go Page Up',
+        run: function() { return triggerToolbarButton(pageUpBtn); }
+      },
+      {
+        phrases: ['go page down', 'page down'],
+        label: 'Go Page Down',
+        run: function() { return triggerToolbarButton(pageDownBtn); }
+      },
+      {
+        phrases: ['go page end', 'page end'],
+        label: 'Go Page End',
+        run: function() { return triggerToolbarButton(pageEndBtn); }
+      }
+    ];
+    for (var i = 0; i < commands.length; i += 1) {
+      if (commands[i].phrases.indexOf(normalized) >= 0) {
+        return commands[i];
+      }
+    }
+    return null;
+  }
+
+  function runVoiceToolbarCommand(command) {
+    if (!command || typeof command.run !== 'function') return;
+    clearTimeout(hotMicSendTimer);
+    hotMicSendTimer = null;
+    input.value = '';
+    renderImagePreviews();
+    autoResize();
+    postMobileLog('voice command detected: ' + command.label, 'mic');
+    showStatus('Voice command: ' + command.label);
+    command.run();
   }
 
   function maybeClearPendingInput(nextText) {
@@ -2471,8 +2611,10 @@
 
     recognition.onresult = function(event) {
       var transcript = '';
+      var hasFinalResult = false;
       for (var i = event.resultIndex; i < event.results.length; i += 1) {
         transcript += event.results[i][0].transcript;
+        hasFinalResult = hasFinalResult || !!event.results[i].isFinal;
       }
       transcript = transcript.trim();
 
@@ -2508,6 +2650,13 @@
         lastRecognitionResultAt = Date.now();
         postMobileLog('recognition.onresult ' + transcript, 'mic');
         showStatus('Heard: ' + transcript);
+      }
+      if (hotMicEnabled && transcript && hasFinalResult) {
+        var voiceCommand = detectVoiceToolbarCommand(transcript);
+        if (voiceCommand) {
+          runVoiceToolbarCommand(voiceCommand);
+          return;
+        }
       }
       input.value = mergeTranscriptWithBaseText(recognitionBaseText, transcript);
       if (hotMicEnabled) {
@@ -2687,10 +2836,33 @@
     });
   }
 
+  if (voiceCommandSheetClose) {
+    voiceCommandSheetClose.addEventListener('click', function() {
+      setVoiceCommandSheetOpen(false);
+    });
+  }
+
+  if (voiceCommandSheet) {
+    voiceCommandSheet.addEventListener('click', function(event) {
+      if (event.target === voiceCommandSheet) {
+        setVoiceCommandSheetOpen(false);
+      }
+    });
+  }
+
+  if (voiceCommandEditor) {
+    loadVoiceCommandsNote();
+    voiceCommandEditor.addEventListener('input', function() {
+      try {
+        localStorage.setItem(VOICE_COMMANDS_STORAGE_KEY, voiceCommandEditor.value);
+      } catch (err) {}
+    });
+  }
+
   sendBtn.addEventListener('click', function() { sendText(true); });
-  if (ttsTestBtn) {
-    ttsTestBtn.addEventListener('click', function() {
-      playVoiceTest();
+  if (voiceCommandsBtn) {
+    voiceCommandsBtn.addEventListener('click', function() {
+      openVoiceCommandSheet();
     });
   }
   if (hotMicBtn) {
