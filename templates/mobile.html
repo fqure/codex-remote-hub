@@ -1483,6 +1483,39 @@
     showStatus('Hot mic listening');
   }
 
+  function stopHotMicFromBarge() {
+    if (!hotMicEnabled) return;
+
+    var shouldInterruptTmux = shouldInterruptTmuxForBargeIn();
+    speechHardStopped = true;
+    hotMicPendingVoiceCommand = null;
+    hotMicAwaitingFreshUtterance = false;
+    hotMicIgnoreResultsUntil = 0;
+    clearTimeout(hotMicSendTimer);
+    hotMicSendTimer = null;
+    clearTimeout(recognitionRestartTimer);
+    recognitionRestartTimer = null;
+    resetSpeechReplyTracking();
+    stopBargeInMonitor();
+    stopSpeechPlayback();
+    recognitionPausedForSpeech = false;
+    pendingSubmittedText = '';
+    pendingInputSnapshot = '';
+    recognitionBaseText = '';
+    input.value = '';
+    renderImagePreviews();
+    autoResize();
+    setHotMicEnabled(false);
+
+    if (shouldInterruptTmux) {
+      postJson(sessionApi('/api/send-keys/'), { key: 'Escape' })
+        .then(function() {
+          setTimeout(function() { fetchPane(true); }, 120);
+        })
+        .catch(function() {});
+    }
+  }
+
   async function startBargeInMonitor() {
     if (bargeRecognitionMode || !shouldMonitorBargeIn() || recognitionListening) {
       return;
@@ -2787,8 +2820,13 @@
         }
         if (keyword) {
           postMobileLog('barge keyword detected: ' + keyword, 'mic');
-          showStatus('Barge: ' + keyword);
-          triggerBargeIn();
+          if (keyword === 'stop') {
+            showStatus('Hot mic off');
+            stopHotMicFromBarge();
+          } else {
+            showStatus('Barge: ' + keyword);
+            triggerBargeIn();
+          }
         }
         return;
       }
