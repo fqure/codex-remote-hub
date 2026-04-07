@@ -846,6 +846,9 @@
   var speechVoice = null;
   var recognitionRestartTimer = null;
   var recognitionPausedForSpeech = false;
+  var bargeRecognitionMode = false;
+  var hotMicAwaitingFreshUtterance = false;
+  var hotMicIgnoreResultsUntil = 0;
   var speechPlaybackToken = 0;
   var speechReplySubmittedText = '';
   var speechReplyBaseText = '';
@@ -875,6 +878,8 @@
   var BARGE_IN_MIN_LEVEL = 0.018;
   var BARGE_IN_TTS_MIN_LEVEL = 0.032;
   var BARGE_IN_TRIGGER_FRAMES = 3;
+  var BARGE_KEYWORD_PATTERN = /\b(stop|cancel|wait|hold|quiet)\b/i;
+  var HOT_MIC_BARGE_RESET_DELAY = 700;
   var SILENT_AUDIO_DATA_URI = 'data:audio/wav;base64,UklGRl4RAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YToRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 
   function isKeyboardOpen() {
@@ -1267,6 +1272,13 @@
     return reply;
   }
 
+  function extractBargeKeyword(text) {
+    var normalized = normalizeSpeechText(text || '').toLowerCase();
+    if (!normalized) return '';
+    var match = normalized.match(BARGE_KEYWORD_PATTERN);
+    return match ? match[1] : '';
+  }
+
   function resetSpeechReplyTracking() {
     clearTimeout(speechTimer);
     speechTimer = null;
@@ -1290,6 +1302,8 @@
     bargeInStartTimer = null;
     clearInterval(bargeInMonitorTimer);
     bargeInMonitorTimer = null;
+    var wasBargeRecognition = bargeRecognitionMode;
+    bargeRecognitionMode = false;
     bargeInVoiceFrames = 0;
     bargeInNoiseFloor = 0.008;
     bargeInTimeData = null;
@@ -1314,6 +1328,9 @@
       bargeInAudioContext = null;
     }
     bargeInAnalyser = null;
+    if (wasBargeRecognition && recognitionListening) {
+      stopRecognition();
+    }
   }
 
   function sampleBargeInLevel() {
@@ -1342,14 +1359,17 @@
 
     var shouldInterruptTmux = shouldInterruptTmuxForBargeIn();
     speechHardStopped = true;
+    hotMicAwaitingFreshUtterance = true;
+    hotMicIgnoreResultsUntil = Date.now() + HOT_MIC_BARGE_RESET_DELAY;
+    resetSpeechReplyTracking();
     stopBargeInMonitor();
     stopSpeechPlayback();
-    resetSpeechReplyTracking();
     recognitionPausedForSpeech = false;
     clearTimeout(recognitionRestartTimer);
     recognitionRestartTimer = null;
     pendingSubmittedText = '';
     pendingInputSnapshot = '';
+    recognitionBaseText = '';
     input.value = '';
     renderImagePreviews();
     document.body.classList.remove('input-focus');
@@ -1378,87 +1398,20 @@
     showStatus('Hot mic listening');
   }
 
-  function pollBargeInMonitor() {
-    if (!shouldMonitorBargeIn()) {
-      stopBargeInMonitor();
-      return;
-    }
-
-    var level = sampleBargeInLevel();
-    if (!level) {
-      bargeInVoiceFrames = 0;
-      return;
-    }
-
-    var floorWeight = speechPlaybackActive ? 0.04 : 0.08;
-    bargeInNoiseFloor = (bargeInNoiseFloor * (1 - floorWeight)) +
-      (Math.min(level, 0.08) * floorWeight);
-
-    var threshold = Math.max(
-      speechPlaybackActive ? BARGE_IN_TTS_MIN_LEVEL : BARGE_IN_MIN_LEVEL,
-      (speechPlaybackActive ? bargeInNoiseFloor * 2.9 : bargeInNoiseFloor * 2.3) +
-        (speechPlaybackActive ? 0.012 : 0.008)
-    );
-
-    if (level > threshold) {
-      bargeInVoiceFrames += 1;
-      if (bargeInVoiceFrames >= BARGE_IN_TRIGGER_FRAMES) {
-        bargeInVoiceFrames = 0;
-        triggerBargeIn();
-      }
-      return;
-    }
-
-    bargeInVoiceFrames = 0;
-  }
-
   async function startBargeInMonitor() {
-    if (bargeInMonitorTimer || !shouldMonitorBargeIn() || recognitionListening) {
+    if (bargeRecognitionMode || !shouldMonitorBargeIn() || recognitionListening) {
       return;
     }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (!recognition) {
       return;
     }
-
+    bargeRecognitionMode = true;
+    postMobileLog('barge recognition armed for keywords', 'mic');
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-
-      if (!shouldMonitorBargeIn() || recognitionListening) {
-        stream.getTracks().forEach(function(track) { track.stop(); });
-        return;
-      }
-
-      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) {
-        stream.getTracks().forEach(function(track) { track.stop(); });
-        return;
-      }
-
-      var context = new AudioContextCtor();
-      var analyser = context.createAnalyser();
-      analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.18;
-      var source = context.createMediaStreamSource(stream);
-      source.connect(analyser);
-      try {
-        await context.resume();
-      } catch (err) {}
-
-      bargeInStream = stream;
-      bargeInAudioContext = context;
-      bargeInSource = source;
-      bargeInAnalyser = analyser;
-      bargeInTimeData = new Uint8Array(analyser.fftSize);
-      bargeInNoiseFloor = 0.008;
-      bargeInVoiceFrames = 0;
-      bargeInMonitorTimer = setInterval(pollBargeInMonitor, BARGE_IN_MONITOR_INTERVAL);
-    } catch (err) {}
+      recognition.start();
+    } catch (err) {
+      bargeRecognitionMode = false;
+    }
   }
 
   function scheduleBargeInMonitorStart(delay) {
@@ -1507,6 +1460,7 @@
 
   function startRecognition() {
     if (!recognition || recognitionListening) return;
+    bargeRecognitionMode = false;
     stopBargeInMonitor();
     clearTimeout(recognitionRestartTimer);
     recognitionRestartTimer = null;
@@ -1556,18 +1510,7 @@
     speechPlaybackActive = false;
     speechPlaybackToken += 1;
     if (replyAudio) {
-      replyAudio.onended = null;
-      replyAudio.onerror = null;
-      try {
-        replyAudio.pause();
-      } catch (err) {}
-      try {
-        replyAudio.currentTime = 0;
-      } catch (err) {}
-      try {
-        replyAudio.removeAttribute('src');
-        replyAudio.load();
-      } catch (err) {}
+      resetReplyAudioElement(true);
     }
     if ('speechSynthesis' in window) {
       try {
@@ -1623,6 +1566,29 @@
       replyAudio.removeAttribute('src');
       replyAudio.load();
     } catch (err) {}
+  }
+
+  function resetReplyAudioElement(clearSrc) {
+    if (!replyAudio) return;
+    replyAudio.onended = null;
+    replyAudio.onerror = null;
+    replyAudio.oncanplay = null;
+    replyAudio.onloadedmetadata = null;
+    try {
+      replyAudio.pause();
+    } catch (err) {}
+    try {
+      replyAudio.currentTime = 0;
+    } catch (err) {}
+    try {
+      replyAudio.muted = false;
+    } catch (err) {}
+    if (clearSrc) {
+      try {
+        replyAudio.removeAttribute('src');
+        replyAudio.load();
+      } catch (err) {}
+    }
   }
 
   function unlockReplyAudio() {
@@ -1705,50 +1671,87 @@
     function finish(message) {
       if (settled || activeToken !== speechPlaybackToken) return;
       settled = true;
-      replyAudio.onended = null;
-      replyAudio.onerror = null;
+      resetReplyAudioElement(false);
       debugSpeech(message);
       speechPlaybackActive = false;
       playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
     }
 
     var playbackUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now();
+    var playAttempted = false;
+    var playReadyTimer = null;
+
+    function attemptPlay() {
+      if (playAttempted || settled || activeToken !== speechPlaybackToken) return;
+      playAttempted = true;
+      clearTimeout(playReadyTimer);
+      playReadyTimer = null;
+      try {
+        var playPromise = replyAudio.play();
+        if (playPromise && typeof playPromise.then === 'function') {
+          playPromise.then(function() {
+            if (settled || activeToken !== speechPlaybackToken) return;
+            debugSpeech('Voice playback started');
+          }).catch(function(err) {
+            var errorText = describeSpeechError(err);
+            if (retryAfterUnlock &&
+                /NotAllowedError/i.test(errorText) &&
+                !replyAudioUnlocked &&
+                activeToken === speechPlaybackToken) {
+              unlockReplyAudio().then(function(unlocked) {
+                if (activeToken !== speechPlaybackToken) return;
+                if (unlocked) {
+                  startServerSpeechPlayback(url, activeToken, {
+                    allowWithoutHotMic: allowWithoutHotMic,
+                    retryAfterUnlock: false
+                  });
+                  return;
+                }
+                finish('Voice play blocked: ' + errorText);
+              });
+              return;
+            }
+            finish('Voice play blocked: ' + errorText);
+          });
+          return;
+        }
+        debugSpeech('Voice playback started');
+      } catch (err) {
+        finish('Voice play blocked: ' + describeSpeechError(err));
+      }
+    }
+
     replyAudio.onended = function() {
+      clearTimeout(playReadyTimer);
+      playReadyTimer = null;
       finish('Voice playback ended');
     };
     replyAudio.onerror = function() {
+      clearTimeout(playReadyTimer);
+      playReadyTimer = null;
       finish('Voice playback error: audio element error');
+    };
+    replyAudio.oncanplay = attemptPlay;
+    replyAudio.onloadedmetadata = function() {
+      if (replyAudio.readyState >= 1) {
+        attemptPlay();
+      }
     };
 
     try {
+      resetReplyAudioElement(true);
       replyAudio.src = playbackUrl;
       replyAudio.load();
-      var playPromise = replyAudio.play();
-      debugSpeech('Voice playback started');
-      if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(function(err) {
-          var errorText = describeSpeechError(err);
-          if (retryAfterUnlock &&
-              /NotAllowedError/i.test(errorText) &&
-              !replyAudioUnlocked &&
-              activeToken === speechPlaybackToken) {
-            unlockReplyAudio().then(function(unlocked) {
-              if (activeToken !== speechPlaybackToken) return;
-              if (unlocked) {
-                startServerSpeechPlayback(url, activeToken, {
-                  allowWithoutHotMic: allowWithoutHotMic,
-                  retryAfterUnlock: false
-                });
-                return;
-              }
-              finish('Voice play blocked: ' + errorText);
-            });
-            return;
-          }
-          finish('Voice play blocked: ' + errorText);
-        });
+      if (replyAudio.readyState >= 2) {
+        attemptPlay();
+      } else {
+        playReadyTimer = setTimeout(function() {
+          attemptPlay();
+        }, 900);
       }
     } catch (err) {
+      clearTimeout(playReadyTimer);
+      playReadyTimer = null;
       finish('Voice play blocked: ' + describeSpeechError(err));
     }
   }
@@ -1921,6 +1924,8 @@
 
     if (enabled) {
       speechHardStopped = false;
+      hotMicAwaitingFreshUtterance = false;
+      hotMicIgnoreResultsUntil = 0;
       resetSpeechReplyTracking();
       recognitionPausedForSpeech = false;
       primeSpeechSynthesis();
@@ -1934,6 +1939,8 @@
       startRecognition();
     } else {
       speechHardStopped = false;
+      hotMicAwaitingFreshUtterance = false;
+      hotMicIgnoreResultsUntil = 0;
       suppressInputFocusAfterMicStop = true;
       stopSpeechPlayback();
       resetSpeechReplyTracking();
@@ -2447,9 +2454,14 @@
 
     recognition.onstart = function() {
       suppressInputFocusAfterMicStop = false;
-      recognitionBaseText = input.value;
+      recognitionBaseText = hotMicAwaitingFreshUtterance ? '' : input.value;
       lastRecognitionResultAt = 0;
       setMicState(true);
+      if (bargeRecognitionMode) {
+        postMobileLog('barge recognition.onstart', 'mic');
+        showStatus('Listening for stop, cancel, wait, hold, or quiet');
+        return;
+      }
       if (hotMicEnabled) {
         setHotMicComposerView(true);
       }
@@ -2458,14 +2470,40 @@
     };
 
     recognition.onresult = function(event) {
-      if (speechAwaitingReply) {
-        return;
-      }
       var transcript = '';
       for (var i = event.resultIndex; i < event.results.length; i += 1) {
         transcript += event.results[i][0].transcript;
       }
       transcript = transcript.trim();
+
+      if (bargeRecognitionMode) {
+        var keyword = extractBargeKeyword(transcript);
+        if (transcript) {
+          postMobileLog('barge recognition.onresult ' + transcript, 'mic');
+        }
+        if (keyword) {
+          postMobileLog('barge keyword detected: ' + keyword, 'mic');
+          showStatus('Barge: ' + keyword);
+          triggerBargeIn();
+        }
+        return;
+      }
+
+      if (speechAwaitingReply) {
+        return;
+      }
+      if (hotMicEnabled && hotMicAwaitingFreshUtterance) {
+        if (Date.now() < hotMicIgnoreResultsUntil) {
+          if (transcript) {
+            postMobileLog('recognition.onresult ignored after barge ' + transcript, 'mic');
+          }
+          return;
+        }
+        hotMicAwaitingFreshUtterance = false;
+        hotMicIgnoreResultsUntil = 0;
+        recognitionBaseText = '';
+        input.value = '';
+      }
       if (transcript) {
         lastRecognitionResultAt = Date.now();
         postMobileLog('recognition.onresult ' + transcript, 'mic');
@@ -2484,6 +2522,15 @@
     recognition.onerror = function(event) {
       setMicState(false);
       var errorCode = event && event.error ? event.error : '';
+      if (bargeRecognitionMode) {
+        postMobileLog('barge recognition.onerror ' + (errorCode || 'unknown'), 'mic');
+        if (shouldMonitorBargeIn()) {
+          bargeRecognitionMode = false;
+          scheduleBargeInMonitorStart(220);
+          showStatus('Listening for stop, cancel, wait, hold, or quiet');
+          return;
+        }
+      }
       postMobileLog('recognition.onerror ' + (errorCode || 'unknown'), 'mic');
       if (suppressInputFocusAfterMicStop) {
         showStatus('Hot mic off');
@@ -2518,6 +2565,15 @@
 
     recognition.onend = function() {
       setMicState(false);
+      if (bargeRecognitionMode) {
+        postMobileLog('barge recognition.onend', 'mic');
+        bargeRecognitionMode = false;
+        if (shouldMonitorBargeIn()) {
+          scheduleBargeInMonitorStart(220);
+          showStatus('Listening for stop, cancel, wait, hold, or quiet');
+        }
+        return;
+      }
       postMobileLog(
         'recognition.onend awaiting=' + speechAwaitingReply +
         ' paused=' + recognitionPausedForSpeech +
