@@ -1244,7 +1244,7 @@
 
         var nameDiv = document.createElement('div');
         nameDiv.className = 'card-name';
-        nameDiv.textContent = s.project_name;
+        nameDiv.textContent = s.display_name || s.project_name;
 
         var metaDiv = document.createElement('div');
         metaDiv.className = 'card-meta';

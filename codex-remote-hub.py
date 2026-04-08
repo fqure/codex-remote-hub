@@ -1123,18 +1123,52 @@ def _friendly_process_source(command: str, agent: str = DEFAULT_AGENT) -> str:
 
 def _find_latest_codex_session_id(cwd: str) -> Optional[str]:
     """Find the most recent Codex session ID for a given project directory."""
-    # Codex stores sessions in ~/.codex/sessions/
-    codex_dir = os.path.expanduser("~/.codex/sessions")
-    if not os.path.isdir(codex_dir):
+    sessions_root = os.path.expanduser("~/.codex/sessions")
+    if not os.path.isdir(sessions_root):
         return None
 
-    # Find session files sorted by most recent first
-    session_files = _glob.glob(os.path.join(codex_dir, "*.jsonl"))
-    if not session_files:
+    target_path = os.path.realpath(cwd or "")
+    if not target_path:
         return None
+    target_name, target_canonical = _canonical_project_info(target_path)
+    target_root = target_canonical or target_path
 
-    for filepath in sorted(session_files, key=os.path.getmtime, reverse=True):
-        return os.path.splitext(os.path.basename(filepath))[0]
+    session_files = sorted(
+        _glob.glob(os.path.join(sessions_root, "*", "*", "*", "*.jsonl")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+    for filepath in session_files:
+        session_meta = None
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                for _ in range(12):
+                    line = f.readline()
+                    if not line:
+                        break
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if payload.get("type") == "session_meta":
+                        session_meta = payload.get("payload") or {}
+                        break
+        except OSError:
+            continue
+
+        if not isinstance(session_meta, dict):
+            continue
+        session_id = session_meta.get("id")
+        session_cwd = session_meta.get("cwd")
+        if not isinstance(session_id, str) or not session_id:
+            continue
+        if not isinstance(session_cwd, str) or not session_cwd:
+            continue
+
+        session_name, session_canonical = _canonical_project_info(session_cwd)
+        session_root = session_canonical or os.path.realpath(session_cwd)
+        if session_root == target_root or (session_name and session_name == target_name and session_root.endswith(os.sep + target_name)):
+            return session_id
 
     return None
 
@@ -2078,6 +2112,10 @@ def discover_capturable_sessions(agent: Optional[str] = None) -> list[dict]:
         }
 
     selected_agent = _normalize_agent(agent) if agent else None
+    codex_index_entries = _read_codex_session_index()
+    claude_desktop_entries = _read_claude_desktop_session_index()
+    codex_saved_projects: Optional[list[dict]] = None
+    claude_saved_projects: Optional[list[dict]] = None
     capturable: list[dict] = []
     for proc in process_rows.values():
         pid = proc["pid"]
@@ -2124,6 +2162,33 @@ def discover_capturable_sessions(agent: Optional[str] = None) -> list[dict]:
             project_name = _friendly_process_source(command, process_agent)
 
         session_id = _find_latest_session_id(cwd, process_agent)
+        if process_agent == AGENT_CLAUDE:
+            if claude_saved_projects is None:
+                claude_saved_projects = _discover_saved_claude_projects()
+            saved_projects = claude_saved_projects
+        else:
+            if codex_saved_projects is None:
+                codex_saved_projects = _discover_saved_codex_projects()
+            saved_projects = codex_saved_projects
+
+        display_name = project_name
+        if session_id:
+            resolved_name = _resolve_thread_display_name(
+                session_id,
+                cwd,
+                process_agent,
+                index_entries=codex_index_entries,
+                claude_desktop_entries=claude_desktop_entries,
+            )
+            if not resolved_name:
+                resolved_name = _match_saved_thread_display_name(
+                    project_name,
+                    cwd,
+                    process_agent,
+                    saved_projects=saved_projects,
+                )
+            if resolved_name:
+                display_name = resolved_name
 
         capturable.append({
             "agent": process_agent,
@@ -2133,6 +2198,7 @@ def discover_capturable_sessions(agent: Optional[str] = None) -> list[dict]:
             "tty": tty,
             "cwd": cwd,
             "project_name": project_name,
+            "display_name": display_name,
             "session_id": session_id,
         })
 
