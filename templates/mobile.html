@@ -22,6 +22,9 @@
     --text-tertiary: #A8A29E;
     --accent: #C2613A;
     --accent-soft: #FDF0EB;
+    --accent-soft-pane: rgba(194,97,58,0.04);
+    --accent-bar: rgba(194,97,58,0.56);
+    --accent-text: rgba(194,97,58,0.88);
     --accent-hover: #A04E2E;
     --danger: #DC2626;
     --danger-soft: #FEF2F2;
@@ -29,15 +32,6 @@
     --shadow-md: 0 4px 16px rgba(45,41,38,0.08);
     --shadow-lg: 0 8px 32px rgba(45,41,38,0.10);
     --shadow-glow: 0 0 0 3px rgba(194,97,58,0.15);
-  }
-
-  /* ── Codex agent overrides ── */
-  body.agent-codex {
-    --accent: #4A90B8;
-    --accent-soft: #EDF5FA;
-    --accent-hover: #3A7499;
-    --shadow-glow: 0 0 0 3px rgba(74,144,184,0.15);
-    --surface-warm: #F8FBFD;
     --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
     --mono: 'SF Mono', ui-monospace, Menlo, monospace;
     --header-h: 44px;
@@ -48,6 +42,18 @@
     --radius-lg: 22px;
     --radius-md: 14px;
     --radius-sm: 10px;
+  }
+
+  /* ── Codex agent overrides ── */
+  body.agent-codex {
+    --accent: #4A90B8;
+    --accent-soft: #EDF5FA;
+    --accent-soft-pane: rgba(74,144,184,0.04);
+    --accent-bar: rgba(74,144,184,0.56);
+    --accent-text: rgba(74,144,184,0.88);
+    --accent-hover: #3A7499;
+    --shadow-glow: 0 0 0 3px rgba(74,144,184,0.15);
+    --surface-warm: #F8FBFD;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -213,12 +219,16 @@
   .pane-block + .pane-block { margin-top: 0.8em; }
 
   .pane-block.user {
-    color: var(--accent);
-    border-left: 2.5px solid var(--accent);
+    color: var(--accent-text);
+    border-left: 2.5px solid var(--accent-bar);
     padding-left: 10px;
     margin-left: -2px;
-    background: linear-gradient(90deg, var(--accent-soft), transparent 60%);
+    background: linear-gradient(90deg, var(--accent-soft-pane) 0%, transparent 58%);
     border-radius: 0 4px 4px 0;
+  }
+
+  .pane-block.user a {
+    color: inherit;
   }
 
   .pane-empty { color: var(--text-tertiary); }
@@ -725,7 +735,7 @@
     <main class="main">
       <section class="viewport">
         <div class="pane-wrap" id="pane-wrap">
-          <pre class="pane pane-empty" id="pane">Loading terminal output…</pre>
+          <div class="pane pane-empty" id="pane">Loading terminal output…</div>
         </div>
       </section>
     </main>
@@ -1082,9 +1092,66 @@
 
   function stripPromptPrefix(line) {
     return (line || '')
-      .replace(/^\s*(?:›|\$|❯)\s*/, '')
+      .replace(/^\s*(?:›|❯|>)\s+/, '')
+      .replace(/^\s*\$\s*/, '')
       .replace(/^\s*[\w.-]+@[\w.-]+(?::[^\s]+)?[$#]\s*/, '')
       .replace(/^\s*(?:~|\/)[^%#$\n]*[%#$]\s*/, '');
+  }
+
+  function isUserPromptBlock(block) {
+    return /^\s*(?:›|❯|>)\s/.test(block || '');
+  }
+
+  function isClaudeStatusLine(line) {
+    return /^\s*⏺\s/.test(line || '');
+  }
+
+  function isClaudeToolLine(line) {
+    return /^\s*(?:[^\w\s]+\s*)?(?:Bash|Read|Write|Edit|MultiEdit|Grep|Glob|LS|Task|TodoWrite|WebFetch|NotebookEdit|Search|Open|Fetch|Find|mcp__[\w.:/-]+)\(/.test(line || '');
+  }
+
+  function isPaneBlockStart(line) {
+    return isUserPromptBlock(line) || isClaudeStatusLine(line) || isClaudeToolLine(line) || /^\s*⎿\s/.test(line || '');
+  }
+
+  function splitPaneParagraph(paragraph) {
+    var lines = (paragraph || '').split('\n');
+    var segments = [];
+    var current = [];
+
+    lines.forEach(function(line) {
+      if (!current.length) {
+        current.push(line);
+        return;
+      }
+
+      if (isPaneBlockStart(line)) {
+        segments.push(current.join('\n').replace(/\s+$/, ''));
+        current = [line];
+        return;
+      }
+
+      current.push(line);
+    });
+
+    if (current.length) {
+      segments.push(current.join('\n').replace(/\s+$/, ''));
+    }
+
+    return segments.filter(function(segment) {
+      return segment && segment.trim();
+    });
+  }
+
+  function splitPaneBlocks(text) {
+    return (text || '')
+      .split(/\n{2,}/)
+      .reduce(function(all, paragraph) {
+        return all.concat(splitPaneParagraph(paragraph));
+      }, [])
+      .filter(function(block) {
+        return block && block.trim();
+      });
   }
 
   function normalizeSpeechLine(line) {
@@ -2152,11 +2219,11 @@
 
     pane.classList.remove('pane-empty');
 
-    var blocks = text.split(/\n{2,}/);
+    var blocks = splitPaneBlocks(text);
     blocks.forEach(function(block) {
       var el = document.createElement('div');
       el.className = 'pane-block';
-      if (block.trim().startsWith('›')) {
+      if (isUserPromptBlock(block)) {
         el.classList.add('user');
       }
       el.appendChild(linkifyText(block));

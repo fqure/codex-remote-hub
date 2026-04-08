@@ -45,7 +45,17 @@ if PLATFORM == "linux":
 def _find_bin(name: str) -> str:
     """Locate a binary on PATH. Returns the name itself as fallback."""
     path = shutil.which(name)
-    return path if path else name
+    if path:
+        return path
+
+    candidates = [
+        os.path.expanduser(os.path.join("~", ".local", "bin", name)),
+        os.path.expanduser(os.path.join("~", "bin", name)),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return name
 
 
 AGENT_CODEX = "codex"
@@ -1903,6 +1913,47 @@ def _ensure_unique_session_name(name: str, agent: str) -> str:
         candidate = f"{name}-{suffix}"
 
 
+def _spawn_tmux_session(
+    session: str,
+    binary: str,
+    safe_agent: str,
+    clean_env: dict[str, str],
+    cwd: Optional[str] = None,
+    session_id: Optional[str] = None,
+    skip_permissions: bool = False,
+    width: Optional[str] = None,
+    height: Optional[str] = None,
+) -> None:
+    """Launch an agent inside a detached tmux session."""
+    cmd = [TMUX_BIN, "new-session", "-d", "-s", session]
+    if width and height:
+        cmd += ["-x", width, "-y", height]
+    if cwd and os.path.isdir(cwd):
+        cmd += ["-c", cwd]
+
+    if safe_agent == AGENT_CLAUDE:
+        cmd.append(binary)
+        if session_id:
+            cmd += ["--resume", session_id]
+        else:
+            cmd.append("--continue")
+    else:
+        if session_id:
+            cmd += [binary, "resume", session_id]
+        else:
+            cmd += [binary, "resume", "--last"] if width and height else [binary]
+
+    if skip_permissions:
+        cmd.append(_agent_spec(safe_agent)["skip_flag"])
+
+    subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=clean_env,
+    )
+
+
 def start_session(
     name: str,
     directory: Optional[str] = None,
@@ -1922,28 +1973,32 @@ def start_session(
     if r.returncode != 0:
         if safe_agent == AGENT_CODEX:
             _ensure_dev_root_agents(directory)
-        cmd = [TMUX_BIN, "new-session", "-d", "-s", session]
-        if directory and os.path.isdir(directory):
-            cmd += ["-c", directory]
-        if safe_agent == AGENT_CLAUDE:
-            cmd.append(binary)
-            if session_id:
-                cmd += ["--resume", session_id]
-        else:
-            if session_id:
-                cmd += [binary, "resume", session_id]
-            else:
-                cmd.append(binary)
-        if skip_permissions:
-            cmd.append(_agent_spec(safe_agent)["skip_flag"])
         clean_env = _session_env(final_name, safe_agent)
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env=clean_env
+        _spawn_tmux_session(
+            session,
+            binary,
+            safe_agent,
+            clean_env,
+            cwd=directory,
+            session_id=session_id,
+            skip_permissions=skip_permissions,
         )
         time.sleep(0.5)
         r = subprocess.run([TMUX_BIN, "has-session", "-t", session], capture_output=True)
+        if r.returncode != 0:
+            if safe_agent == AGENT_CLAUDE and session_id:
+                fallback_cwd = os.path.expanduser("~")
+                _spawn_tmux_session(
+                    session,
+                    binary,
+                    safe_agent,
+                    clean_env,
+                    cwd=fallback_cwd,
+                    session_id=session_id,
+                    skip_permissions=skip_permissions,
+                )
+                time.sleep(0.5)
+                r = subprocess.run([TMUX_BIN, "has-session", "-t", session], capture_output=True)
         if r.returncode != 0:
             action = "continue" if session_id else "start"
             raise RuntimeError(f"Failed to {action} {_agent_spec(safe_agent)['label']} session")
@@ -1984,33 +2039,40 @@ def capture_session(
     if safe_agent == AGENT_CODEX:
         _ensure_dev_root_agents(cwd)
 
-    cmd = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
-    if cwd and os.path.isdir(cwd):
-        cmd += ["-c", cwd]
-
-    if safe_agent == AGENT_CLAUDE:
-        cmd.append(binary)
-        if session_id:
-            cmd += ["--resume", session_id]
-        else:
-            cmd.append("--continue")
-    else:
-        if session_id:
-            cmd += [binary, "resume", session_id]
-        else:
-            cmd += [binary, "resume", "--last"]
-    if skip_permissions:
-        cmd.append(_agent_spec(safe_agent)["skip_flag"])
-
     clean_env = _session_env(name, safe_agent)
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     env=clean_env)
+    _spawn_tmux_session(
+        session,
+        binary,
+        safe_agent,
+        clean_env,
+        cwd=cwd,
+        session_id=session_id,
+        skip_permissions=skip_permissions,
+        width="200",
+        height="50",
+    )
     time.sleep(1.0)
 
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
     if r.returncode != 0:
         if session_id:
+            if safe_agent == AGENT_CLAUDE:
+                fallback_cwd = os.path.expanduser("~")
+                _spawn_tmux_session(
+                    session,
+                    binary,
+                    safe_agent,
+                    clean_env,
+                    cwd=fallback_cwd,
+                    session_id=session_id,
+                    skip_permissions=skip_permissions,
+                    width="200",
+                    height="50",
+                )
+                time.sleep(1.0)
+                r = subprocess.run([TMUX_BIN, "has-session", "-t", session], capture_output=True)
+        if r.returncode != 0 and session_id:
             raise RuntimeError(f"Failed to continue {_agent_spec(safe_agent)['label']} thread")
 
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],

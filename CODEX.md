@@ -40,7 +40,7 @@ After editing files, deploy to the local instance:
 cp codex-remote-hub.py ~/.codex-remote-hub/codex-remote-hub.py
 cp templates/*.html ~/.codex-remote-hub/templates/
 pkill -f "ttyd.*-p 77"
-~/.codex-remote-hub/ctl.sh restart
+codex-remote-hub restart
 ```
 
 ## Environment Variables

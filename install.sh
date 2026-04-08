@@ -255,6 +255,11 @@ step "3/6  Setting up autostart..."
 TTYD_PATH=$(which ttyd)
 PYTHON_PATH=$(which python3)
 CODEX_PATH=$(which codex)
+CLAUDE_PATH=$(which claude 2>/dev/null || true)
+SERVICE_PATH="/opt/homebrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin:${HOME}/.local/bin:${HOME}/bin:$(dirname "$CODEX_PATH")"
+if [ -n "$CLAUDE_PATH" ]; then
+    SERVICE_PATH="${SERVICE_PATH}:$(dirname "$CLAUDE_PATH")"
+fi
 
 case "$OS" in
     macos)
@@ -283,11 +288,13 @@ case "$OS" in
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:$(dirname "$CODEX_PATH")</string>
+        <string>${SERVICE_PATH}</string>
         <key>TTYD_BIN</key>
         <string>${TTYD_PATH}</string>
         <key>CODEX_BIN</key>
         <string>${CODEX_PATH}</string>
+        <key>CLAUDE_BIN</key>
+        <string>${CLAUDE_PATH}</string>
         <key>HOME</key>
         <string>${HOME}</string>
         <key>CODEX_REMOTE_HUB_PORT</key>
@@ -327,10 +334,11 @@ Type=simple
 ExecStart=${PYTHON_PATH} ${INSTALL_DIR}/codex-remote-hub.py
 Restart=on-failure
 RestartSec=5
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin:$(dirname "$CODEX_PATH")
+Environment=PATH=${SERVICE_PATH}
 Environment=HOME=${HOME}
 Environment=TTYD_BIN=${TTYD_PATH}
 Environment=CODEX_BIN=${CODEX_PATH}
+Environment=CLAUDE_BIN=${CLAUDE_PATH}
 Environment=CODEX_REMOTE_HUB_PORT=${HUB_PORT}
 Environment=CODEX_REMOTE_HUB_DIR=${INSTALL_DIR}
 Environment=CODEX_DEV_ROOT=${DEV_ROOT}

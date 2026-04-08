@@ -199,6 +199,7 @@ All settings are optional environment variables:
 | `TTYD_BIN` | auto-detected | Path to ttyd binary |
 | `TMUX_BIN` | auto-detected | Path to tmux binary |
 | `CODEX_BIN` | auto-detected | Path to Codex CLI binary |
+| `CLAUDE_BIN` | auto-detected | Path to Claude Code CLI binary |
 
 Set these in your shell profile (`~/.bashrc`, `~/.zshrc`) or in the service configuration.
 
