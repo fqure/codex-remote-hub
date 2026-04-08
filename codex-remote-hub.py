@@ -21,6 +21,7 @@ import re
 import mimetypes
 import tempfile
 import wave
+import html as _html
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import unquote, parse_qs, urlparse
@@ -160,6 +161,47 @@ def _safe_path_segment(value: str) -> str:
     return cleaned or "default"
 
 
+def _slugify_session_label(value: str) -> str:
+    """Match the browser slugification used for session names."""
+    lowered = (value or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9-]+", "-", lowered)
+    slug = re.sub(r"^-+|-+$", "", slug)
+    return slug[:48]
+
+
+def _humanize_session_label(value: str) -> str:
+    """Convert a slug-like session key into a readable fallback label."""
+    raw = (value or "").strip().strip("-")
+    if not raw:
+        return "Session"
+    words = [part for part in raw.split("-") if part]
+    if words and words[-1].isdigit():
+        suffix = words.pop()
+    else:
+        suffix = ""
+    label = " ".join(words) if words else raw.replace("-", " ")
+    label = re.sub(r"\s+", " ", label).strip()
+    if label:
+        label = label[0].upper() + label[1:]
+    if suffix:
+        label = f"{label} {suffix}".strip()
+    return label or "Session"
+
+
+def _is_title_like(value: Optional[str], max_length: int = 96) -> bool:
+    """Return True when a string looks like a compact thread title."""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return False
+    if "\n" in text or "\r" in text:
+        return False
+    if len(text) > max_length:
+        return False
+    return True
+
+
 def _assets_root_dir() -> str:
     """Return the on-disk root for uploaded/generated session assets."""
     explicit = os.environ.get("CODEX_REMOTE_HUB_ASSETS_DIR", "").strip()
@@ -183,6 +225,40 @@ def _session_asset_dir(name: str, agent: str = DEFAULT_AGENT, ensure: bool = Fal
 def _session_mobile_log_path(name: str, agent: str = DEFAULT_AGENT) -> str:
     """Return the per-session mobile debug log path."""
     return os.path.join(_session_asset_dir(name, agent=agent, ensure=True), "mobile-debug.log")
+
+
+def _session_metadata_path(name: str, agent: str = DEFAULT_AGENT) -> str:
+    """Return the per-session metadata path."""
+    return os.path.join(_session_asset_dir(name, agent=agent, ensure=True), "session.json")
+
+
+def _read_session_metadata(name: str, agent: str = DEFAULT_AGENT) -> dict:
+    """Read persisted session metadata for display and recovery helpers."""
+    try:
+        with open(_session_metadata_path(name, agent=agent), "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_session_metadata(name: str, metadata: dict, agent: str = DEFAULT_AGENT) -> dict:
+    """Merge and persist session metadata."""
+    if not isinstance(metadata, dict):
+        return {}
+
+    existing = _read_session_metadata(name, agent=agent)
+    merged = dict(existing)
+    for key, value in metadata.items():
+        if value not in {None, ""}:
+            merged[key] = value
+
+    try:
+        with open(_session_metadata_path(name, agent=agent), "w", encoding="utf-8") as f:
+            json.dump(merged, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except OSError:
+        return existing
+    return merged
 
 
 def _append_session_mobile_log(
@@ -1101,6 +1177,23 @@ def _find_latest_session_id(cwd: str, agent: str = DEFAULT_AGENT) -> Optional[st
     return _find_latest_codex_session_id(cwd)
 
 
+def _resolve_codex_thread_title(
+    session_id: Optional[str],
+    cwd: Optional[str] = None,
+    index_entries: Optional[dict[str, dict]] = None,
+) -> str:
+    """Resolve a Codex thread title from the desktop app index when available."""
+    safe_session_id = (session_id or "").strip()
+    entry = {}
+    if safe_session_id:
+        entries = index_entries if isinstance(index_entries, dict) else _read_codex_session_index()
+        entry = entries.get(safe_session_id, {}) if isinstance(entries, dict) else {}
+
+    session_meta = {"cwd": cwd or ""}
+    title = _extract_codex_thread_name(safe_session_id or (cwd or ""), session_meta, entry)
+    return title.strip() if isinstance(title, str) else ""
+
+
 def _claude_projects_dir() -> str:
     """Return the root directory where Claude stores project sessions."""
     return os.path.expanduser("~/.claude/projects")
@@ -1222,11 +1315,232 @@ def _read_claude_jsonl_summary(filepath: str) -> dict[str, Optional[str]]:
     return info
 
 
+def _read_claude_desktop_session_index() -> dict[str, dict]:
+    """Return Claude Desktop session entries keyed by CLI session id."""
+    root = os.path.expanduser("~/Library/Application Support/Claude/claude-code-sessions")
+    if not os.path.isdir(root):
+        return {}
+
+    entries: dict[str, dict] = {}
+    for path in _glob.glob(os.path.join(root, "*", "*", "*.json")):
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                payload = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        cli_session_id = payload.get("cliSessionId")
+        title = payload.get("title")
+        if not isinstance(cli_session_id, str) or not cli_session_id.strip():
+            continue
+        if not _is_title_like(title, max_length=140):
+            continue
+
+        existing = entries.get(cli_session_id)
+        last_activity = payload.get("lastActivityAt") or 0
+        existing_last_activity = existing.get("lastActivityAt") if isinstance(existing, dict) else 0
+        if isinstance(existing_last_activity, (int, float)) and isinstance(last_activity, (int, float)):
+            if existing and existing_last_activity > last_activity:
+                continue
+        entries[cli_session_id] = payload
+    return entries
+
+
+def _resolve_claude_thread_title(
+    session_id: Optional[str],
+    cwd: Optional[str] = None,
+    desktop_entries: Optional[dict[str, dict]] = None,
+) -> str:
+    """Resolve a Claude thread title from stored project metadata when available."""
+    safe_session_id = (session_id or "").strip()
+    safe_cwd = (cwd or "").strip()
+    if safe_session_id:
+        entries = desktop_entries if isinstance(desktop_entries, dict) else _read_claude_desktop_session_index()
+        entry = entries.get(safe_session_id, {}) if isinstance(entries, dict) else {}
+        title = entry.get("title") if isinstance(entry, dict) else None
+        if _is_title_like(title, max_length=140):
+            return title.strip()
+
+    project_dirs: list[str] = []
+    if safe_cwd:
+        project_dirs.append(os.path.join(_claude_projects_dir(), safe_cwd.replace("/", "-")))
+
+    seen: set[str] = set()
+    for project_dir in project_dirs:
+        real_dir = os.path.realpath(project_dir)
+        if real_dir in seen or not os.path.isdir(real_dir):
+            continue
+        seen.add(real_dir)
+
+        index_path = os.path.join(real_dir, "sessions-index.json")
+        if os.path.isfile(index_path):
+            try:
+                with open(index_path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                raw_entries = payload.get("entries")
+                if isinstance(raw_entries, list):
+                    for item in raw_entries:
+                        if not isinstance(item, dict):
+                            continue
+                        if safe_session_id and item.get("sessionId") != safe_session_id:
+                            continue
+                        summary = item.get("summary")
+                        if _is_title_like(summary):
+                            return summary.strip()
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        if safe_session_id:
+            jsonl_path = os.path.join(real_dir, f"{safe_session_id}.jsonl")
+            if os.path.isfile(jsonl_path):
+                summary = _read_claude_jsonl_summary(jsonl_path)
+                value = summary.get("summary")
+                if _is_title_like(value):
+                    return value.strip()
+    return ""
+
+
+def _resolve_thread_display_name(
+    session_id: Optional[str],
+    cwd: Optional[str],
+    agent: str,
+    index_entries: Optional[dict[str, dict]] = None,
+    claude_desktop_entries: Optional[dict[str, dict]] = None,
+) -> str:
+    """Resolve a human-readable thread title for the selected agent."""
+    safe_agent = _normalize_agent(agent)
+    if safe_agent == AGENT_CLAUDE:
+        title = _resolve_claude_thread_title(session_id, cwd, desktop_entries=claude_desktop_entries)
+    else:
+        title = _resolve_codex_thread_title(session_id, cwd, index_entries=index_entries)
+    return title.strip() if isinstance(title, str) else ""
+
+
+def _match_saved_thread_display_name(
+    name: str,
+    cwd: Optional[str],
+    agent: str,
+    saved_projects: Optional[list[dict]] = None,
+) -> str:
+    """Infer a display title by matching the running session slug to saved thread data."""
+    safe_name = (name or "").strip().lower()
+    if not safe_name:
+        return ""
+
+    variants = {safe_name}
+    variants.add(re.sub(r"-\d+$", "", safe_name))
+
+    if saved_projects is None:
+        saved_projects = (
+            _discover_saved_claude_projects()
+            if _normalize_agent(agent) == AGENT_CLAUDE
+            else _discover_saved_codex_projects()
+        )
+
+    canonical_cwd = _canonical_project_info(cwd or "")[1] if cwd else ""
+    for project in saved_projects or []:
+        project_path = project.get("project_path") or ""
+        if canonical_cwd and project_path and os.path.realpath(project_path) != canonical_cwd:
+            continue
+        for thread in project.get("threads", []):
+            summary = (thread.get("summary") or "").strip()
+            first_prompt = (thread.get("first_prompt") or "").strip()
+            if _normalize_agent(agent) == AGENT_CLAUDE:
+                candidates = [summary] if _is_title_like(summary) else []
+            else:
+                candidates = [summary, first_prompt]
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                slug = _slugify_session_label(candidate)
+                if slug and slug in variants:
+                    return summary or first_prompt
+    return ""
+
+
+def _tmux_display_message(session: str, template: str) -> str:
+    """Fetch a tmux display-message template value for a session."""
+    proc = subprocess.run(
+        [TMUX_BIN, "display-message", "-p", "-t", session, template],
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _session_display_name(
+    name: str,
+    agent: str,
+    session_name: Optional[str] = None,
+    cwd: Optional[str] = None,
+    index_entries: Optional[dict[str, dict]] = None,
+    saved_projects: Optional[list[dict]] = None,
+    claude_desktop_entries: Optional[dict[str, dict]] = None,
+) -> str:
+    """Return the preferred UI title for a running hub session."""
+    safe_agent = _normalize_agent(agent)
+    metadata = _read_session_metadata(name, agent=agent)
+    metadata_cwd = metadata.get("cwd")
+    if not isinstance(metadata_cwd, str):
+        metadata_cwd = ""
+    metadata_session_id = metadata.get("session_id")
+    if not isinstance(metadata_session_id, str) or not metadata_session_id.strip():
+        metadata_session_id = None
+
+    cached = metadata.get("display_name")
+    if safe_agent != AGENT_CLAUDE and isinstance(cached, str) and cached.strip():
+        cached_title = cached.strip()
+        fallback_title = ""
+        if metadata_cwd:
+            fallback_title, _ = _canonical_project_info(metadata_cwd)
+        if cached_title and (metadata_session_id or not fallback_title or cached_title != fallback_title):
+            return cached_title
+
+    session_id = metadata_session_id
+
+    session_cwd = (cwd or metadata_cwd or "").strip()
+    if not session_cwd and session_name:
+        session_cwd = _tmux_display_message(session_name, "#{pane_current_path}")
+    if session_cwd and not session_id:
+        session_id = _find_latest_session_id(session_cwd, safe_agent)
+
+    title = _resolve_thread_display_name(
+        session_id,
+        session_cwd,
+        safe_agent,
+        index_entries=index_entries,
+        claude_desktop_entries=claude_desktop_entries,
+    )
+    fallback_title = ""
+    if session_cwd:
+        fallback_title, _ = _canonical_project_info(session_cwd)
+    if not title or (fallback_title and title == fallback_title):
+        matched_title = _match_saved_thread_display_name(name, session_cwd, safe_agent, saved_projects=saved_projects)
+        if matched_title:
+            title = matched_title
+    if title:
+        _write_session_metadata(name, {
+            "cwd": session_cwd,
+            "display_name": title,
+            "session_id": session_id,
+        }, agent=safe_agent)
+        return title
+
+    if session_cwd:
+        fallback_name = _humanize_session_label(name)
+        _write_session_metadata(name, {
+            "cwd": session_cwd,
+            "display_name": fallback_name,
+        }, agent=safe_agent)
+        return fallback_name
+    return _humanize_session_label(name)
+
+
 def _discover_saved_claude_projects() -> list[dict]:
     """Return persisted Claude project folders and their saved threads."""
     projects_root = _claude_projects_dir()
     if not os.path.isdir(projects_root):
         return []
+    desktop_entries = _read_claude_desktop_session_index()
 
     projects: list[dict] = []
     try:
@@ -1261,9 +1575,12 @@ def _discover_saved_claude_projects() -> list[dict]:
             if not isinstance(session_id, str) or not session_id:
                 continue
             project_path = item.get("projectPath") or project_path
+            desktop_entry = desktop_entries.get(session_id, {})
+            desktop_title = desktop_entry.get("title") if isinstance(desktop_entry, dict) else None
+            summary = desktop_title.strip() if _is_title_like(desktop_title, max_length=140) else ""
             threads_by_id[session_id] = {
                 "session_id": session_id,
-                "summary": item.get("summary") or item.get("firstPrompt") or session_id,
+                "summary": summary or item.get("summary") or item.get("firstPrompt") or session_id,
                 "first_prompt": item.get("firstPrompt") or "",
                 "project_path": item.get("projectPath") or project_path or "",
                 "message_count": item.get("messageCount") or 0,
@@ -1283,10 +1600,16 @@ def _discover_saved_claude_projects() -> list[dict]:
             if session_id in threads_by_id:
                 continue
             summary = _read_claude_jsonl_summary(filepath)
+            desktop_entry = desktop_entries.get(session_id, {})
+            desktop_title = desktop_entry.get("title") if isinstance(desktop_entry, dict) else None
             inferred_path = summary.get("cwd") or project_path or ""
             threads_by_id[session_id] = {
                 "session_id": session_id,
-                "summary": summary.get("summary") or summary.get("first_prompt") or session_id,
+                "summary": (
+                    desktop_title.strip()
+                    if _is_title_like(desktop_title, max_length=140)
+                    else summary.get("summary") or summary.get("first_prompt") or session_id
+                ),
                 "first_prompt": summary.get("first_prompt") or "",
                 "project_path": inferred_path,
                 "message_count": summary.get("message_count") or 0,
@@ -1621,6 +1944,10 @@ def get_sessions(agent: Optional[str] = None) -> list[dict]:
             ttyd_ports = ports_future.result(timeout=3)
         sessions: list[dict] = []
         selected_agent = _normalize_agent(agent) if agent else None
+        codex_index_entries = _read_codex_session_index()
+        claude_desktop_entries = _read_claude_desktop_session_index()
+        codex_saved_projects: Optional[list[dict]] = None
+        claude_saved_projects: Optional[list[dict]] = None
         for line in out.strip().split("\n"):
             if not line:
                 continue
@@ -1648,11 +1975,28 @@ def get_sessions(agent: Optional[str] = None) -> list[dict]:
                 time_str = "?"
             attached = parts[3] if len(parts) > 3 else "0"
             port = port_for_name(name, session_agent)
+            if session_agent == AGENT_CLAUDE:
+                if claude_saved_projects is None:
+                    claude_saved_projects = _discover_saved_claude_projects()
+                saved_projects = claude_saved_projects
+            else:
+                if codex_saved_projects is None:
+                    codex_saved_projects = _discover_saved_codex_projects()
+                saved_projects = codex_saved_projects
+            display_name = _session_display_name(
+                name,
+                session_agent,
+                session_name=session_name,
+                index_entries=codex_index_entries,
+                saved_projects=saved_projects,
+                claude_desktop_entries=claude_desktop_entries,
+            )
             sessions.append({
                 "agent": session_agent,
                 "agent_label": _agent_spec(session_agent)["label"],
                 "product": _agent_spec(session_agent)["product"],
                 "name": name,
+                "display_name": display_name,
                 "session_name": session_name,
                 "port": port,
                 "time": time_str,
@@ -2026,6 +2370,13 @@ def start_session(
         subprocess.run([TMUX_BIN, "set-option", "-t", session, "mouse", "on"],
                        capture_output=True)
 
+    title = _resolve_thread_display_name(session_id, directory, safe_agent)
+    _write_session_metadata(final_name, {
+        "cwd": directory or "",
+        "display_name": title or final_name,
+        "session_id": session_id,
+    }, agent=safe_agent)
+
     _start_ttyd(session, port, safe_agent)
     return port, final_name
 
@@ -2112,6 +2463,13 @@ def capture_session(
     subprocess.run([TMUX_BIN, "set-option", "-t", session, "mouse", "on"],
                    capture_output=True)
 
+    title = _resolve_thread_display_name(session_id, cwd, safe_agent)
+    _write_session_metadata(name, {
+        "cwd": cwd or "",
+        "display_name": title or name,
+        "session_id": session_id,
+    }, agent=safe_agent)
+
     _start_ttyd(session, port, safe_agent)
     return port, name
 
@@ -2155,13 +2513,18 @@ def render_hub(host: str) -> str:
         status_class = "active" if s["has_ttyd"] else "idle"
         attached_badge = '<span class="badge active">connected</span>' if s["attached"] else ""
         agent_badge = ''
+        display_name = _html.escape(s.get("display_name") or s["name"])
+        route_name = _html.escape(s["name"])
+        safe_agent = _html.escape(s["agent"])
+        agent_label_js = _html.escape(json.dumps(s["agent_label"]), quote=True)
+        confirm_name_js = _html.escape(json.dumps(s.get("display_name") or s["name"]), quote=True)
         session_cards += f"""
         <div class="card card-agent-{s['agent']}">
-          <a href="/start/{s['name']}?agent={s['agent']}" class="card-link">
+          <a href="/start/{route_name}?agent={safe_agent}" class="card-link">
             <div class="card-left">
               <span class="status-dot {status_class}"></span>
               <div>
-                <div class="card-name">{s['name']}</div>
+                <div class="card-name">{display_name}</div>
                 <div class="card-meta">port {s['port']} &middot; {s['time']}</div>
               </div>
             </div>
@@ -2171,7 +2534,7 @@ def render_hub(host: str) -> str:
               <span class="arrow">&rsaquo;</span>
             </div>
           </a>
-          <button class="stop-btn" onclick="event.preventDefault();if(confirm('Stop {s['agent_label']} session {s['name']}?'))location='/stop/{s['name']}?agent={s['agent']}'">
+          <button class="stop-btn" onclick="event.preventDefault();if(confirm('Stop ' + {agent_label_js} + ' session ' + {confirm_name_js} + '?'))location='/stop/{route_name}?agent={safe_agent}'">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>
         </div>"""

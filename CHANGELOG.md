@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Saved thread browser** — show resumable Codex and Claude threads directly on the homepage, grouped by project so each repo folder expands into its associated threads instead of showing a flat global list
 
 ### Fixed
+- **Active thread titles** — prefer stored Codex and Claude thread titles on the live dashboard instead of exposing the tmux/session slug derived from the first prompt
 - **Thread handoff semantics** — continue saved or discovered Codex and Claude threads in-place instead of forking sidechains, and fail fast if a requested thread cannot be resumed exactly
 - **Claude service launch path** — resolve the Claude CLI from common user install locations like `~/.local/bin` and persist `CLAUDE_BIN` in installed services so dashboard launches work outside an interactive shell
 - **Canonical project grouping** — collapse Claude worktrees and nested workspace paths back to their repo roots so saved threads appear under recognizable project folders like `subdact` or `predact-website`
