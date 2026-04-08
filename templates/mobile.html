@@ -888,6 +888,7 @@
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
   var composerShell = document.querySelector('.composer-shell');
+  var inputPillWrap = document.querySelector('.input-pill-wrap');
   var controlsShell = document.getElementById('controls-shell');
   var controlsToggle = document.getElementById('controls-toggle');
   var imagePreviewStrip = document.getElementById('image-preview-strip');
@@ -1093,6 +1094,7 @@
   function stripPromptPrefix(line) {
     return (line || '')
       .replace(/^\s*(?:›|❯|>)\s+/, '')
+      .replace(/^\s*(?:⏺|⎿)\s+/, '')
       .replace(/^\s*\$\s*/, '')
       .replace(/^\s*[\w.-]+@[\w.-]+(?::[^\s]+)?[$#]\s*/, '')
       .replace(/^\s*(?:~|\/)[^%#$\n]*[%#$]\s*/, '');
@@ -1231,15 +1233,52 @@
     return nextLines.slice(i).join('\n');
   }
 
+  function isSpeechDividerLine(line) {
+    return /^[\u2500-\u257f\u2014\u2015\-_=]{8,}$/.test((line || '').trim());
+  }
+
+  function isSpeechFooterLine(line) {
+    return /^\?\s+for shortcuts\b/i.test((line || '').trim());
+  }
+
   function splitSpeechBlocks(text) {
-    return sanitizeForSpeech(text)
-      .split(/\n{2,}/)
-      .map(function(block) { return block.trim(); })
-      .filter(Boolean);
+    var paragraphs = sanitizeForSpeech(text).split(/\n{2,}/);
+    var blocks = [];
+
+    paragraphs.forEach(function(paragraph) {
+      var lines = (paragraph || '').split('\n');
+      var current = [];
+
+      lines.forEach(function(line) {
+        var startsNewBlock = current.length && (
+          isPaneBlockStart(line) ||
+          isSpeechDividerLine(line) ||
+          isSpeechFooterLine(line)
+        );
+
+        if (startsNewBlock) {
+          blocks.push(current.join('\n').trim());
+          current = [line];
+          return;
+        }
+
+        current.push(line);
+      });
+
+      if (current.length) {
+        blocks.push(current.join('\n').trim());
+      }
+    });
+
+    return blocks.filter(Boolean);
   }
 
   function isUserSpeechBlock(block) {
-    return (block || '').trim().indexOf('›') === 0;
+    return /^\s*(?:›|❯|>)\s/.test(block || '');
+  }
+
+  function isAssistantSpeechBlock(block) {
+    return /^\s*(?:⏺|⎿)\s/.test(block || '');
   }
 
   function isImageSpeechBlock(block) {
@@ -1250,9 +1289,26 @@
     return /^[\u2500-\u257f\u2014\u2015\-_=]{8,}$/.test((block || '').trim());
   }
 
+  function isPromptOnlySpeechBlock(block) {
+    return /^\s*(?:›|❯|>)\s*$/.test((block || '').trim());
+  }
+
   function isFooterSpeechBlock(block) {
     var normalized = normalizeSpeechText(block);
     if (!normalized) return false;
+
+    if (/^(?:\?\s+for shortcuts|for shortcuts)$/i.test(normalized)) {
+      return true;
+    }
+    if (/^tip:/i.test(normalized)) {
+      return true;
+    }
+    if (/^tips? for getting started\b/i.test(normalized)) {
+      return true;
+    }
+    if (/\besc(?:ape)? to interrupt\b/i.test(normalized)) {
+      return true;
+    }
 
     if (/(?:^| )(?:gpt|o1|o3|o4|claude|gemini|codex)\b/i.test(normalized) &&
         /(?:% left|percent left|token|tokens)/i.test(normalized) &&
@@ -1286,7 +1342,7 @@
       if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
         break;
       }
-      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block) || isPromptOnlySpeechBlock(block)) {
         continue;
       }
       segment.push(block);
@@ -1325,7 +1381,10 @@
       if (isUserSpeechBlock(block) || isFooterSpeechBlock(block)) {
         continue;
       }
-      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block)) {
+      if (isImageSpeechBlock(block) || isDividerSpeechBlock(block) || isPromptOnlySpeechBlock(block)) {
+        continue;
+      }
+      if (!isAssistantSpeechBlock(block)) {
         continue;
       }
       if (isProgressSpeechBlock(block)) {
@@ -1845,6 +1904,7 @@
   function startServerSpeechPlayback(url, activeToken, options) {
     var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
     var retryAfterUnlock = !!(options && options.retryAfterUnlock);
+    var serverDurationMs = options && options.durationMs ? Number(options.durationMs) : 0;
     if (!replyAudio) {
       debugSpeech('Audio element unavailable');
       speechPlaybackActive = false;
@@ -1865,6 +1925,30 @@
     var playbackUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now();
     var playAttempted = false;
     var playReadyTimer = null;
+    var playFinishTimer = null;
+    var playbackDurationMs = 0;
+
+    function clearPlaybackTimers() {
+      clearTimeout(playReadyTimer);
+      playReadyTimer = null;
+      clearTimeout(playFinishTimer);
+      playFinishTimer = null;
+    }
+
+    function schedulePlaybackFinishFallback() {
+      clearTimeout(playFinishTimer);
+      playFinishTimer = null;
+      var fallbackDurationMs = playbackDurationMs;
+      if (!fallbackDurationMs || !isFinite(fallbackDurationMs) || fallbackDurationMs <= 0) {
+        fallbackDurationMs = serverDurationMs;
+      }
+      if (!fallbackDurationMs || !isFinite(fallbackDurationMs) || fallbackDurationMs <= 0) {
+        fallbackDurationMs = 4000;
+      }
+      playFinishTimer = setTimeout(function() {
+        finish('Voice playback ended (timer)');
+      }, fallbackDurationMs + 600);
+    }
 
     function attemptPlay() {
       if (playAttempted || settled || activeToken !== speechPlaybackToken) return;
@@ -1876,6 +1960,7 @@
         if (playPromise && typeof playPromise.then === 'function') {
           playPromise.then(function() {
             if (settled || activeToken !== speechPlaybackToken) return;
+            schedulePlaybackFinishFallback();
             debugSpeech('Voice playback started');
           }).catch(function(err) {
             var errorText = describeSpeechError(err);
@@ -1900,6 +1985,7 @@
           });
           return;
         }
+        schedulePlaybackFinishFallback();
         debugSpeech('Voice playback started');
       } catch (err) {
         finish('Voice play blocked: ' + describeSpeechError(err));
@@ -1907,17 +1993,16 @@
     }
 
     replyAudio.onended = function() {
-      clearTimeout(playReadyTimer);
-      playReadyTimer = null;
+      clearPlaybackTimers();
       finish('Voice playback ended');
     };
     replyAudio.onerror = function() {
-      clearTimeout(playReadyTimer);
-      playReadyTimer = null;
+      clearPlaybackTimers();
       finish('Voice playback error: audio element error');
     };
     replyAudio.oncanplay = attemptPlay;
     replyAudio.onloadedmetadata = function() {
+      playbackDurationMs = Math.round((replyAudio.duration || 0) * 1000);
       if (replyAudio.readyState >= 1) {
         attemptPlay();
       }
@@ -1935,8 +2020,7 @@
         }, 900);
       }
     } catch (err) {
-      clearTimeout(playReadyTimer);
-      playReadyTimer = null;
+      clearPlaybackTimers();
       finish('Voice play blocked: ' + describeSpeechError(err));
     }
   }
@@ -1973,6 +2057,7 @@
     }
 
     try {
+      postMobileLog('Voice text: ' + speechText.slice(0, 200), 'audio');
       debugSpeech('Generating voice audio');
       var asset = await requestServerSpeechAsset(speechText);
       if (activeToken !== speechPlaybackToken) {
@@ -1981,6 +2066,7 @@
       debugSpeech('Voice audio received');
       startServerSpeechPlayback(asset.url, activeToken, {
         allowWithoutHotMic: allowWithoutHotMic,
+        durationMs: asset.duration_ms,
         retryAfterUnlock: true
       });
     } catch (err) {
@@ -2843,6 +2929,16 @@
     var next = transcript || '';
     if (!base) return next;
     if (!next) return base;
+    var normalizedBase = normalizeSpeechText(base);
+    var normalizedNext = normalizeSpeechText(next);
+    if (normalizedBase && normalizedNext) {
+      if (normalizedNext === normalizedBase || normalizedNext.indexOf(normalizedBase) === 0) {
+        return next;
+      }
+      if (normalizedBase.indexOf(normalizedNext) === 0) {
+        return base;
+      }
+    }
     return /\s$/.test(base) ? base + next : base + ' ' + next;
   }
 
@@ -2937,7 +3033,12 @@
       }
       autoResize();
       if (hotMicEnabled) {
-        scheduleHotMicSend();
+        if (hasFinalResult) {
+          scheduleHotMicSend();
+        } else {
+          clearTimeout(hotMicSendTimer);
+          hotMicSendTimer = null;
+        }
       }
     };
 
@@ -3144,6 +3245,23 @@
       activateMic(event);
     });
   }
+
+  function focusComposerInputFromTap(event) {
+    if (!input || document.activeElement === input) return;
+    if (event && event.target && event.target.closest('button')) return;
+
+    input.focus();
+    if (typeof input.setSelectionRange === 'function') {
+      var end = input.value.length;
+      input.setSelectionRange(end, end);
+    }
+  }
+
+  if (inputPillWrap) {
+    inputPillWrap.addEventListener('click', focusComposerInputFromTap);
+    inputPillWrap.addEventListener('touchend', focusComposerInputFromTap, { passive: true });
+  }
+
   input.addEventListener('focus', function() {
     document.body.classList.add('input-focus');
     window.scrollTo(0, 0);

@@ -5,6 +5,7 @@ A lightweight web server that manages ttyd + tmux terminal sessions.
 """
 
 from typing import Optional
+import io
 import subprocess
 import os
 import sys
@@ -19,6 +20,7 @@ import platform as _platform
 import re
 import mimetypes
 import tempfile
+import wave
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import unquote, parse_qs, urlparse
@@ -703,6 +705,23 @@ def _tts_asset_extension(content_type: str) -> str:
     return ".wav"
 
 
+def _audio_duration_ms(audio_bytes: bytes, content_type: str) -> int:
+    """Best-effort audio duration in milliseconds."""
+    if not audio_bytes:
+        return 0
+    if content_type != "audio/wav":
+        return 0
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wav_file:
+            frame_rate = wav_file.getframerate()
+            frame_count = wav_file.getnframes()
+            if frame_rate > 0 and frame_count >= 0:
+                return int(round((frame_count / float(frame_rate)) * 1000))
+    except (wave.Error, EOFError, ValueError):
+        return 0
+    return 0
+
+
 def _write_session_tts_asset(name: str, text: str, agent: str = DEFAULT_AGENT) -> dict:
     """Generate local speech audio and persist it in the session asset directory."""
     audio_bytes, content_type = _synthesize_tts_audio(text)
@@ -711,6 +730,7 @@ def _write_session_tts_asset(name: str, text: str, agent: str = DEFAULT_AGENT) -
     asset_dir = _session_asset_dir(safe_name, agent=safe_agent, ensure=True)
     filename = f"tts-reply-{int(time.time() * 1000)}{_tts_asset_extension(content_type)}"
     target_path = os.path.join(asset_dir, filename)
+    duration_ms = _audio_duration_ms(audio_bytes, content_type)
 
     with open(target_path, "wb") as f:
         f.write(audio_bytes)
@@ -721,6 +741,7 @@ def _write_session_tts_asset(name: str, text: str, agent: str = DEFAULT_AGENT) -
         "path": target_path,
         "url": f"/assets/{safe_name}/{filename}?agent={safe_agent}",
         "content_type": content_type,
+        "duration_ms": duration_ms,
         "updated": int(stat.st_mtime * 1000),
         "size": stat.st_size,
     }
