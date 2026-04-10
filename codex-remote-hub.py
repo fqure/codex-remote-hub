@@ -829,16 +829,98 @@ def _has_ssl_certs() -> bool:
     return os.path.exists(cert_file) and os.path.exists(key_file)
 
 
-def _synthesize_tts_audio(text: str) -> tuple[bytes, str]:
-    """Generate local macOS speech audio for a text payload."""
-    cleaned = (text or "").strip()
-    if not cleaned:
-        raise ValueError("missing text")
-    if len(cleaned) > 12000:
-        raise ValueError("text too long")
-    if PLATFORM != "darwin":
-        raise RuntimeError("Local TTS is only supported on macOS")
+def _tts_provider() -> str:
+    """Return the configured TTS backend selection."""
+    provider = (os.environ.get("CODEX_TTS_PROVIDER", "auto") or "auto").strip().lower()
+    return provider if provider in {"auto", "kokoro", "say"} else "auto"
 
+
+def _kokoro_python_path() -> str:
+    """Return the Python interpreter for the optional Kokoro runtime."""
+    configured = (os.environ.get("CODEX_KOKORO_PYTHON", "") or "").strip()
+    candidates = [
+        configured,
+        os.path.join(INSTALL_DIR, ".venv-kokoro", "bin", "python"),
+        os.path.join(SCRIPT_DIR, ".venv-kokoro", "bin", "python"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return ""
+
+
+def _kokoro_helper_path() -> str:
+    """Return the helper script path for Kokoro synthesis."""
+    configured = (os.environ.get("CODEX_KOKORO_HELPER", "") or "").strip()
+    candidates = [
+        configured,
+        os.path.join(INSTALL_DIR, "codex-remote-kokoro.py"),
+        os.path.join(SCRIPT_DIR, "codex-remote-kokoro.py"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return ""
+
+
+def _kokoro_ready() -> bool:
+    """Return True when the optional Kokoro helper runtime is available."""
+    return bool(_kokoro_python_path() and _kokoro_helper_path())
+
+
+def _kokoro_config() -> tuple[str, str, str]:
+    """Return the selected Kokoro voice, language code, and speed."""
+    voice = (os.environ.get("CODEX_TTS_VOICE", "af_heart") or "af_heart").strip() or "af_heart"
+    lang_code = (os.environ.get("CODEX_TTS_LANG", "a") or "a").strip() or "a"
+    speed = (os.environ.get("CODEX_TTS_SPEED", "1.0") or "1.0").strip() or "1.0"
+    return voice, lang_code, speed
+
+
+def _synthesize_kokoro_audio(text: str) -> tuple[bytes, str]:
+    """Generate local Kokoro speech audio for a text payload."""
+    python_bin = _kokoro_python_path()
+    helper_path = _kokoro_helper_path()
+    if not python_bin or not helper_path:
+        raise RuntimeError("Kokoro runtime is not installed")
+
+    voice, lang_code, speed = _kokoro_config()
+    fd, wav_path = tempfile.mkstemp(prefix="codex-remote-hub-kokoro-", suffix=".wav")
+    os.close(fd)
+    try:
+        proc = subprocess.run(
+            [
+                python_bin,
+                helper_path,
+                "--output",
+                wav_path,
+                "--voice",
+                voice,
+                "--lang-code",
+                lang_code,
+                "--speed",
+                speed,
+                "--text",
+                text,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=240,
+            env=dict(os.environ, PYTORCH_ENABLE_MPS_FALLBACK=os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "1")),
+        )
+        if proc.returncode != 0:
+            message = (proc.stderr or proc.stdout or "Kokoro synthesis failed").strip()
+            raise RuntimeError(message or "Kokoro synthesis failed")
+        with open(wav_path, "rb") as f:
+            return f.read(), "audio/wav"
+    finally:
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
+
+def _synthesize_say_audio(text: str) -> tuple[bytes, str]:
+    """Generate local macOS speech audio with the native say command."""
     say_bin = shutil.which("say")
     if not say_bin:
         raise RuntimeError("macOS say command not found")
@@ -850,7 +932,7 @@ def _synthesize_tts_audio(text: str) -> tuple[bytes, str]:
     os.close(wav_fd)
     try:
         proc = subprocess.run(
-            [say_bin, "-o", output_path, cleaned],
+            [say_bin, "-o", output_path, text],
             capture_output=True,
             text=True,
             timeout=180,
@@ -880,6 +962,143 @@ def _synthesize_tts_audio(text: str) -> tuple[bytes, str]:
             os.remove(wav_path)
         except OSError:
             pass
+
+
+def _synthesize_tts_audio(text: str) -> tuple[bytes, str]:
+    """Generate local speech audio for a text payload."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        raise ValueError("missing text")
+    if len(cleaned) > 12000:
+        raise ValueError("text too long")
+    if PLATFORM != "darwin":
+        raise RuntimeError("Local TTS is only supported on macOS")
+    provider = _tts_provider()
+    if provider == "kokoro":
+        return _synthesize_kokoro_audio(cleaned)
+    if provider == "auto" and _kokoro_ready():
+        return _synthesize_kokoro_audio(cleaned)
+    return _synthesize_say_audio(cleaned)
+
+
+def _system_total_memory_bytes() -> int:
+    """Return total physical memory in bytes when available."""
+    if PLATFORM == "darwin":
+        try:
+            proc = subprocess.run(
+                ["/usr/sbin/sysctl", "-n", "hw.memsize"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if proc.returncode == 0:
+                return max(0, int((proc.stdout or "0").strip() or "0"))
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return 0
+    return 0
+
+
+def _system_available_memory_bytes() -> int:
+    """Return an approximate currently available memory budget in bytes."""
+    if PLATFORM != "darwin":
+        return _system_total_memory_bytes()
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/vm_stat"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if proc.returncode != 0:
+            return _system_total_memory_bytes()
+        lines = (proc.stdout or "").splitlines()
+        if not lines:
+            return _system_total_memory_bytes()
+        page_match = re.search(r"page size of (\d+) bytes", lines[0])
+        page_size = int(page_match.group(1)) if page_match else 4096
+        page_counts: dict[str, int] = {}
+        for line in lines[1:]:
+            if ":" not in line:
+                continue
+            key, raw_value = line.split(":", 1)
+            value = raw_value.strip().rstrip(".").replace(".", "")
+            if not value.isdigit():
+                continue
+            page_counts[key.strip()] = int(value)
+        available_pages = (
+            page_counts.get("Pages free", 0) +
+            page_counts.get("Pages inactive", 0) +
+            page_counts.get("Pages speculative", 0) +
+            page_counts.get("Pages purgeable", 0)
+        )
+        if available_pages > 0:
+            return available_pages * page_size
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return _system_total_memory_bytes()
+    return _system_total_memory_bytes()
+
+
+def _kokoro_process_status() -> dict:
+    """Return live CPU and memory usage for active Kokoro helper processes."""
+    total_memory_bytes = _system_total_memory_bytes()
+    available_memory_bytes = _system_available_memory_bytes() or total_memory_bytes
+    status = {
+        "provider": _tts_provider(),
+        "kokoro_ready": _kokoro_ready(),
+        "active": False,
+        "process_count": 0,
+        "cpu_percent": 0.0,
+        "memory_bytes": 0,
+        "memory_percent": 0.0,
+        "memory_available_bytes": available_memory_bytes,
+        "memory_total_bytes": total_memory_bytes,
+        "updated": int(time.time() * 1000),
+    }
+    if not status["kokoro_ready"]:
+        return status
+
+    helper_path = _kokoro_helper_path()
+    try:
+        proc = subprocess.run(
+            ["ps", "-Ao", "pid=,%cpu=,rss=,command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return status
+    if proc.returncode != 0:
+        return status
+
+    cpu_percent = 0.0
+    memory_bytes = 0
+    process_count = 0
+    for line in (proc.stdout or "").splitlines():
+        parts = line.strip().split(None, 3)
+        if len(parts) < 4:
+            continue
+        pid_text, cpu_text, rss_text, command = parts
+        if helper_path not in command and "codex-remote-kokoro.py" not in command:
+            continue
+        try:
+            pid = int(pid_text)
+            rss_kb = int(rss_text)
+            cpu_value = float(cpu_text)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        process_count += 1
+        cpu_percent += max(0.0, cpu_value)
+        memory_bytes += max(0, rss_kb) * 1024
+
+    status["active"] = process_count > 0
+    status["process_count"] = process_count
+    status["cpu_percent"] = min(100.0, round(cpu_percent, 1))
+    status["memory_bytes"] = memory_bytes
+    if available_memory_bytes > 0:
+        status["memory_percent"] = min(100.0, round((memory_bytes / float(available_memory_bytes)) * 100, 1))
+    return status
 
 
 def _find_free_port() -> int:
@@ -2851,6 +3070,10 @@ class HubHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(asset)
+            return
+
+        if path == "/api/tts-status":
+            self._send_json(_kokoro_process_status())
             return
 
         if path.startswith("/api/mobile-log/"):

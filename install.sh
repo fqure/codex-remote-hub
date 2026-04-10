@@ -239,6 +239,11 @@ if [ -f "$SRC_DIR/codex-remote-shot" ]; then
     chmod +x "$INSTALL_DIR/codex-remote-shot"
 fi
 
+if [ -f "$SRC_DIR/codex-remote-kokoro.py" ]; then
+    cp "$SRC_DIR/codex-remote-kokoro.py" "$INSTALL_DIR/codex-remote-kokoro.py"
+    chmod +x "$INSTALL_DIR/codex-remote-kokoro.py"
+fi
+
 mkdir -p "$INSTALL_DIR/templates"
 cp "$SRC_DIR/templates/"*.html "$INSTALL_DIR/templates/" 2>/dev/null
 

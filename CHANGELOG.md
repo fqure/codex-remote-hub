@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dual-agent sessions** — support launching, resuming, and managing both Codex CLI and Claude Code sessions from the same hub, including Claude capture via `--resume ... --fork-session`
 - **Agent-aware dashboard** — add a Codex/Claude selector for new sessions and tag active or capturable sessions with their originating CLI so mixed work stays distinguishable
 - **Saved thread browser** — show resumable Codex and Claude threads directly on the homepage, grouped by project so each repo folder expands into its associated threads instead of showing a flat global list
+- **Optional Kokoro TTS backend** — add a local Kokoro helper runtime that the hub auto-detects on macOS and uses instead of `say` when installed, with env vars for voice, language, and speed selection
 
 ### Fixed
 - **Active thread titles** — prefer stored Codex and Claude thread titles on the live dashboard instead of exposing the tmux/session slug derived from the first prompt
