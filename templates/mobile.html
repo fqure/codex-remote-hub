@@ -1494,6 +1494,13 @@
     return match ? match[1] : '';
   }
 
+  function extractStandaloneHotMicCommand(text) {
+    var normalized = normalizeSpeechText(text || '').toLowerCase();
+    if (!normalized) return '';
+    var match = normalized.match(/^(?:please\s+)?(stop|cancel|wait|hold|pause|quiet)(?:\s+(?:hot\s*mic|hotmic|mic|listening))?$/i);
+    return match ? match[1].toLowerCase() : '';
+  }
+
   function resetSpeechReplyTracking() {
     clearTimeout(speechTimer);
     speechTimer = null;
@@ -1564,6 +1571,7 @@
     if (!hotMicEnabled) return;
 
     var shouldInterruptTmux = shouldInterruptTmuxForBargeIn();
+    hotMicAwaitingFreshUtterance = true;
     stopBargeInMonitor();
     stopSpeechPlayback();
     resetSpeechReplyTracking();
@@ -3006,9 +3014,6 @@
     };
 
     recognition.onresult = function(event) {
-      if (speechAwaitingReply) {
-        return;
-      }
       var transcript = '';
       var hasFinalResult = false;
       for (var i = event.resultIndex; i < event.results.length; i += 1) {
@@ -3023,6 +3028,33 @@
         lastRecognitionResultAt = Date.now();
         postMobileLog('recognition.onresult ' + transcript, 'mic');
         showStatus('Heard: ' + transcript);
+      }
+      if (hotMicEnabled && transcript && hasFinalResult) {
+        var standaloneCommand = extractStandaloneHotMicCommand(transcript);
+        if (standaloneCommand === 'stop') {
+          postMobileLog('hot mic standalone stop command', 'mic');
+          input.value = '';
+          renderImagePreviews();
+          autoResize();
+          setHotMicEnabled(false);
+          showStatus('Hot mic off');
+          return;
+        }
+      }
+      if (speechAwaitingReply) {
+        return;
+      }
+      if (hotMicAwaitingFreshUtterance && transcript && hasFinalResult) {
+        hotMicAwaitingFreshUtterance = false;
+        var bargeKeyword = extractBargeKeyword(transcript);
+        if (bargeKeyword === 'stop') {
+          input.value = '';
+          renderImagePreviews();
+          autoResize();
+          setHotMicEnabled(false);
+          showStatus('Hot mic off');
+          return;
+        }
       }
       input.value = mergeTranscriptWithBaseText(recognitionBaseText, transcript);
       if (hotMicEnabled) {
