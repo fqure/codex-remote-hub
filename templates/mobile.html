@@ -258,6 +258,65 @@
     padding: 0;
   }
 
+  .tts-status-strip {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    padding: 1px 1px 0;
+    transition: opacity 0.2s ease;
+  }
+
+  .tts-meter {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .tts-meter-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .tts-meter-label {
+    font: 700 10px/1 var(--sans);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+
+  .tts-meter-value {
+    font: 600 10.5px/1.1 var(--sans);
+    color: var(--text-secondary);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .tts-meter-track {
+    position: relative;
+    height: 6px;
+    border-radius: var(--radius-full);
+    background: var(--surface-dim);
+    overflow: hidden;
+  }
+
+  .tts-meter-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0%;
+    border-radius: inherit;
+    transition: width 0.22s ease;
+  }
+
+  .tts-meter-fill.cpu {
+    background: linear-gradient(90deg, rgba(194,97,58,0.55), rgba(194,97,58,0.92));
+  }
+
+  .tts-meter-fill.memory {
+    background: linear-gradient(90deg, rgba(116,157,112,0.55), rgba(91,132,87,0.92));
+  }
+
   .toolbar-icon {
     width: var(--toolbar-icon-size);
     height: var(--toolbar-icon-size);
@@ -792,6 +851,27 @@
           </button>
         </div>
 
+        <div class="tts-status-strip" id="tts-status-strip" aria-live="polite">
+          <div class="tts-meter">
+            <div class="tts-meter-row">
+              <span class="tts-meter-label">CPU</span>
+              <span class="tts-meter-value" id="tts-cpu-value">0%</span>
+            </div>
+            <div class="tts-meter-track">
+              <div class="tts-meter-fill cpu" id="tts-cpu-bar"></div>
+            </div>
+          </div>
+          <div class="tts-meter">
+            <div class="tts-meter-row">
+              <span class="tts-meter-label">Memory</span>
+              <span class="tts-meter-value" id="tts-memory-value">0 MB / 0 MB</span>
+            </div>
+            <div class="tts-meter-track">
+              <div class="tts-meter-fill memory" id="tts-memory-bar"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Input row with mic on left -->
         <div class="input-row">
           <button id="hot-mic-btn" class="hot-mic-btn icon-action-btn" type="button" aria-label="Start hot mic" title="Hot mic">
@@ -860,6 +940,7 @@
   var SESSION = "{{SESSION_NAME}}";
   var SESSION_PRODUCT = "{{SESSION_PRODUCT}}";
   var AGENT = "{{SESSION_AGENT}}";
+  var KOKORO_READY = {{KOKORO_READY}};
   var AGENT_QUERY = '?agent=' + encodeURIComponent(AGENT);
   document.body.classList.add('agent-' + AGENT);
 
@@ -887,6 +968,11 @@
   var pageEndBtn = document.getElementById('page-end-btn');
   var sendBtn = document.getElementById('send-btn');
   var statusText = document.getElementById('status-text');
+  var ttsStatusStrip = document.getElementById('tts-status-strip');
+  var ttsCpuBar = document.getElementById('tts-cpu-bar');
+  var ttsCpuValue = document.getElementById('tts-cpu-value');
+  var ttsMemoryBar = document.getElementById('tts-memory-bar');
+  var ttsMemoryValue = document.getElementById('tts-memory-value');
   var composerShell = document.querySelector('.composer-shell');
   var inputPillWrap = document.querySelector('.input-pill-wrap');
   var controlsShell = document.getElementById('controls-shell');
@@ -946,6 +1032,7 @@
   var statusResetTimer = null;
   var replyAudioUnlocked = false;
   var replyAudioUnlocking = false;
+  var ttsStatusTimer = null;
   var recognitionWatchdogTimer = null;
   var audioCaptureRecoveryTimer = null;
   var audioCaptureRecoveryInFlight = false;
@@ -1037,6 +1124,44 @@
       : Math.min(input.scrollHeight, 84);
     input.style.height = targetHeight + 'px';
     syncViewportHeight();
+  }
+
+  function formatMetricBytes(bytes) {
+    var value = Number(bytes) || 0;
+    if (value <= 0) return '0 MB';
+    var mb = value / (1024 * 1024);
+    if (mb < 1024) {
+      return mb.toFixed(mb >= 100 ? 0 : 1) + ' MB';
+    }
+    var gb = mb / 1024;
+    return gb.toFixed(gb >= 10 ? 0 : 1) + ' GB';
+  }
+
+  function renderTtsStatus(data) {
+    if (!ttsStatusStrip || !ttsCpuBar || !ttsCpuValue || !ttsMemoryBar || !ttsMemoryValue) return;
+    var payload = data || {};
+    var ready = !!payload.kokoro_ready;
+    var active = !!payload.active;
+    var cpuPercent = Math.max(0, Math.min(100, Number(payload.cpu_percent) || 0));
+    var memoryBytes = Math.max(0, Number(payload.memory_bytes) || 0);
+    var availableBytes = Math.max(0, Number(payload.available_bytes) || 0);
+    var memoryDenominator = availableBytes > 0 ? availableBytes : Math.max(memoryBytes, 1);
+    var memoryPercent = Math.max(0, Math.min(100, (memoryBytes / memoryDenominator) * 100));
+    ttsStatusStrip.style.opacity = ready ? '1' : '0.52';
+    ttsCpuBar.style.width = cpuPercent.toFixed(1) + '%';
+    ttsMemoryBar.style.width = memoryPercent.toFixed(1) + '%';
+    ttsCpuValue.textContent = active ? (cpuPercent >= 10 ? cpuPercent.toFixed(0) : cpuPercent.toFixed(1)) + '%' : '0%';
+    ttsMemoryValue.textContent = formatMetricBytes(memoryBytes) + ' / ' + formatMetricBytes(availableBytes);
+  }
+
+  async function fetchTtsStatus() {
+    if (!ttsStatusStrip) return;
+    try {
+      var res = await fetch(queryWithAgent('/api/tts-status'), { cache: 'no-store' });
+      if (!res.ok) return;
+      var data = await res.json();
+      renderTtsStatus(data);
+    } catch (err) {}
   }
 
   function setUpdatedTime(timestamp) {
@@ -3338,11 +3463,21 @@
   refreshSpeechVoice();
   initMic();
   refreshMicButtonState();
+  renderTtsStatus({
+    kokoro_ready: KOKORO_READY,
+    active: false,
+    cpu_percent: 0,
+    memory_bytes: 0,
+    available_bytes: 0
+  });
+  fetchTtsStatus();
+  ttsStatusTimer = setInterval(fetchTtsStatus, 750);
   fetchPane(true);
   pollTimer = setInterval(function() { fetchPane(false); }, 1000);
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible') {
       fetchPane(true);
+      fetchTtsStatus();
       if (hotMicEnabled && !recognitionListening && !recognitionPausedForSpeech) {
         scheduleRecognitionRestart(50);
       }

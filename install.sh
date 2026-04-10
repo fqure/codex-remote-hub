@@ -20,7 +20,7 @@ NC='\033[0m'
 INSTALL_DIR="$HOME/.codex-remote-hub"
 HUB_PORT=7690
 LABEL="com.codex-remote-hub.server"
-DEV_ROOT_INPUT="${CODEX_DEV_ROOT:-$HOME/Projects}"
+DEV_ROOT_INPUT="${CODEX_DEV_ROOT:-$HOME/Documents/GitHub}"
 ASSETS_DIR_INPUT="${CODEX_REMOTE_HUB_ASSETS_DIR:-$HOME/Pictures/Screenshots}"
 
 case "$DEV_ROOT_INPUT" in

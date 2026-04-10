@@ -83,7 +83,7 @@ TMUX_BIN = _resolve_bin("TMUX_BIN", "tmux")
 CODEX_BIN = _resolve_bin("CODEX_BIN", "codex")
 CLAUDE_BIN = _resolve_bin("CLAUDE_BIN", "claude")
 FONT_SIZE = int(os.environ.get("CODEX_FONT_SIZE", 11))
-DEV_ROOT = os.environ.get("CODEX_DEV_ROOT", os.path.expanduser("~/Projects"))
+DEV_ROOT = os.environ.get("CODEX_DEV_ROOT", os.path.expanduser("~/Documents/GitHub"))
 INSTALL_DIR = os.environ.get("CODEX_REMOTE_HUB_DIR", os.path.expanduser("~/.codex-remote-hub"))
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".tox",
@@ -753,8 +753,92 @@ def _has_ssl_certs() -> bool:
     return os.path.exists(cert_file) and os.path.exists(key_file)
 
 
-def _synthesize_tts_audio(text: str) -> tuple[bytes, str]:
-    """Generate local macOS speech audio for a text payload."""
+def _tts_provider() -> str:
+    """Return the configured speech provider."""
+    provider = (os.environ.get("CODEX_REMOTE_HUB_TTS", "auto") or "auto").strip().lower()
+    return provider if provider in {"auto", "kokoro", "say"} else "auto"
+
+
+def _kokoro_python_path() -> str:
+    """Return the Kokoro virtualenv Python path when available."""
+    configured = (os.environ.get("CODEX_KOKORO_PYTHON", "") or "").strip()
+    candidates = [
+        configured,
+        os.path.join(INSTALL_DIR, ".venv-kokoro", "bin", "python"),
+        os.path.join(SCRIPT_DIR, ".venv-kokoro", "bin", "python"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return ""
+
+
+def _kokoro_helper_path() -> str:
+    """Return the Kokoro helper script path when available."""
+    configured = (os.environ.get("CODEX_KOKORO_HELPER", "") or "").strip()
+    candidates = [
+        configured,
+        os.path.join(INSTALL_DIR, "codex-remote-kokoro.py"),
+        os.path.join(SCRIPT_DIR, "codex-remote-kokoro.py"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return ""
+
+
+def _kokoro_ready() -> bool:
+    """Return True when Kokoro can synthesize speech locally."""
+    return bool(_kokoro_python_path() and _kokoro_helper_path())
+
+
+def _kokoro_config() -> tuple[str, str, str]:
+    """Return Kokoro voice, language, and speed settings."""
+    voice = (os.environ.get("KOKORO_VOICE", "af_heart") or "af_heart").strip() or "af_heart"
+    lang_code = (os.environ.get("KOKORO_LANG_CODE", "a") or "a").strip() or "a"
+    speed = (os.environ.get("KOKORO_SPEED", "1.0") or "1.0").strip() or "1.0"
+    return voice, lang_code, speed
+
+
+def _synthesize_kokoro_audio(text: str) -> tuple[bytes, str]:
+    """Generate WAV speech audio using the Kokoro helper."""
+    python_bin = _kokoro_python_path()
+    helper_path = _kokoro_helper_path()
+    if not python_bin or not helper_path:
+        raise RuntimeError("Kokoro is not installed")
+
+    voice, lang_code, speed = _kokoro_config()
+    fd, wav_path = tempfile.mkstemp(prefix="codex-remote-hub-kokoro-", suffix=".wav")
+    os.close(fd)
+    try:
+        proc = subprocess.run(
+            [
+                python_bin,
+                helper_path,
+                "--text", text,
+                "--output", wav_path,
+                "--voice", voice,
+                "--lang-code", lang_code,
+                "--speed", speed,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if proc.returncode != 0:
+            message = (proc.stderr or proc.stdout or "Speech synthesis failed").strip()
+            raise RuntimeError(message or "Speech synthesis failed")
+        with open(wav_path, "rb") as f:
+            return f.read(), "audio/wav"
+    finally:
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
+
+def _synthesize_say_audio(text: str) -> tuple[bytes, str]:
+    """Generate local macOS say audio as fallback."""
     cleaned = (text or "").strip()
     if not cleaned:
         raise ValueError("missing text")
@@ -804,6 +888,103 @@ def _synthesize_tts_audio(text: str) -> tuple[bytes, str]:
             os.remove(wav_path)
         except OSError:
             pass
+
+
+def _synthesize_tts_audio(text: str) -> tuple[bytes, str]:
+    """Generate local speech audio for a text payload."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        raise ValueError("missing text")
+    if len(cleaned) > 12000:
+        raise ValueError("text too long")
+
+    provider = _tts_provider()
+    if provider == "kokoro":
+        return _synthesize_kokoro_audio(cleaned)
+    if provider == "auto" and _kokoro_ready():
+        return _synthesize_kokoro_audio(cleaned)
+    return _synthesize_say_audio(cleaned)
+
+
+def _mac_available_memory_bytes() -> int:
+    """Return best-effort currently available memory bytes on macOS."""
+    if PLATFORM != "darwin":
+        return 0
+    try:
+        proc = subprocess.run(
+            ["vm_stat"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        output = proc.stdout or ""
+        if proc.returncode != 0 or not output:
+            return 0
+        page_size = 4096
+        match = re.search(r"page size of (\d+) bytes", output)
+        if match:
+            page_size = int(match.group(1))
+        page_count = 0
+        for label in ("Pages free", "Pages speculative", "Pages inactive"):
+            label_match = re.search(rf"{re.escape(label)}:\s+([0-9.]+)", output)
+            if not label_match:
+                continue
+            page_count += int(float(label_match.group(1).replace(".", "")))
+        return max(0, page_count * page_size)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 0
+
+
+def _kokoro_process_status() -> dict:
+    """Return best-effort Kokoro process CPU and memory status."""
+    available_bytes = _mac_available_memory_bytes()
+    status = {
+        "provider": _tts_provider(),
+        "kokoro_ready": _kokoro_ready(),
+        "active": False,
+        "cpu_percent": 0.0,
+        "memory_bytes": 0,
+        "available_bytes": available_bytes,
+    }
+    if not status["kokoro_ready"]:
+        return status
+
+    helper_path = _kokoro_helper_path()
+    if not helper_path:
+        return status
+
+    try:
+        proc = subprocess.run(
+            ["ps", "-axo", "pid=,pcpu=,rss=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if proc.returncode != 0:
+            return status
+        cpu_total = 0.0
+        mem_total = 0
+        for raw_line in (proc.stdout or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 3)
+            if len(parts) < 4:
+                continue
+            command = parts[3]
+            if helper_path not in command and "codex-remote-kokoro.py" not in command:
+                continue
+            try:
+                cpu_total += float(parts[1])
+                mem_total += int(parts[2]) * 1024
+            except ValueError:
+                continue
+        status["active"] = mem_total > 0 or cpu_total > 0
+        status["cpu_percent"] = max(0.0, cpu_total)
+        status["memory_bytes"] = max(0, mem_total)
+        return status
+    except (OSError, subprocess.TimeoutExpired):
+        return status
 
 
 def _find_free_port() -> int:
@@ -2219,7 +2400,8 @@ def render_mobile_terminal(name: str, port: int, host: str, agent: str = DEFAULT
             .replace("{{SESSION_NAME}}", name)
             .replace("{{SESSION_AGENT}}", safe_agent)
             .replace("{{SESSION_PRODUCT}}", _agent_spec(safe_agent)["product"])
-            .replace("{{TERMINAL_URL}}", terminal_url))
+            .replace("{{TERMINAL_URL}}", terminal_url)
+            .replace("{{KOKORO_READY}}", "true" if _kokoro_ready() else "false"))
 
 
 def get_pane_snapshot(name: str, lines: int = 160, agent: str = DEFAULT_AGENT) -> dict:
@@ -2434,6 +2616,10 @@ class HubHandler(BaseHTTPRequestHandler):
             except (ValueError, IndexError):
                 tail = 80
             self._send_json({"entries": _read_session_mobile_log(name, agent=agent, tail=tail)})
+            return
+
+        if path == "/api/tts-status":
+            self._send_json(_kokoro_process_status())
             return
 
         if path.startswith("/api/tts/"):
