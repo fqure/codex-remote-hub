@@ -946,6 +946,9 @@
   var statusResetTimer = null;
   var replyAudioUnlocked = false;
   var replyAudioUnlocking = false;
+  var recognitionWatchdogTimer = null;
+  var audioCaptureRecoveryTimer = null;
+  var audioCaptureRecoveryInFlight = false;
   var HOT_MIC_SILENCE_DELAY = 1000; // 1 second hot mic response delay
   var SPEECH_FOLLOWUP_DELAY = 900;
   var BARGE_IN_MONITOR_DELAY = 180;
@@ -964,6 +967,8 @@
     'Icon Commands:',
     'Add Photo, Take Screenshot, Take Window Screenshot, Show Clipboard, Go Page up, Go Page Down, Page Bottom'
   ].join('\n');
+  var IS_SAFARI = /Safari/i.test(navigator.userAgent || '') &&
+    !/(?:Chrome|CriOS|FxiOS|EdgiOS|EdgA|OPR|OPT|DuckDuckGo)/i.test(navigator.userAgent || '');
   var SILENT_AUDIO_DATA_URI = 'data:audio/wav;base64,UklGRl4RAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YToRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 
   function isKeyboardOpen() {
@@ -1512,8 +1517,6 @@
     bargeInStartTimer = null;
     clearInterval(bargeInMonitorTimer);
     bargeInMonitorTimer = null;
-    var wasBargeRecognition = bargeRecognitionMode;
-    bargeRecognitionMode = false;
     bargeInVoiceFrames = 0;
     bargeInNoiseFloor = 0.008;
     bargeInTimeData = null;
@@ -1538,9 +1541,6 @@
       bargeInAudioContext = null;
     }
     bargeInAnalyser = null;
-    if (wasBargeRecognition && recognitionListening) {
-      stopRecognition();
-    }
   }
 
   function sampleBargeInLevel() {
@@ -1557,30 +1557,21 @@
   }
 
   function shouldInterruptTmuxForBargeIn() {
-    return hotMicEnabled && (
-      speechAwaitingReply ||
-      speechPlaybackActive ||
-      speechQueue.length
-    );
+    return hotMicEnabled && speechAwaitingReply;
   }
 
   function triggerBargeIn() {
     if (!hotMicEnabled) return;
 
     var shouldInterruptTmux = shouldInterruptTmuxForBargeIn();
-    speechHardStopped = true;
-    hotMicAwaitingFreshUtterance = true;
-    hotMicIgnoreResultsUntil = Date.now() + HOT_MIC_BARGE_RESET_DELAY;
-    resetSpeechReplyTracking();
     stopBargeInMonitor();
     stopSpeechPlayback();
+    resetSpeechReplyTracking();
     recognitionPausedForSpeech = false;
     clearTimeout(recognitionRestartTimer);
     recognitionRestartTimer = null;
     pendingSubmittedText = '';
     pendingInputSnapshot = '';
-    hotMicPendingVoiceCommand = null;
-    recognitionBaseText = '';
     input.value = '';
     renderImagePreviews();
     document.body.classList.remove('input-focus');
@@ -1609,53 +1600,87 @@
     showStatus('Hot mic listening');
   }
 
-  function stopHotMicFromBarge() {
-    if (!hotMicEnabled) return;
-
-    var shouldInterruptTmux = shouldInterruptTmuxForBargeIn();
-    speechHardStopped = true;
-    hotMicPendingVoiceCommand = null;
-    hotMicAwaitingFreshUtterance = false;
-    hotMicIgnoreResultsUntil = 0;
-    clearTimeout(hotMicSendTimer);
-    hotMicSendTimer = null;
-    clearTimeout(recognitionRestartTimer);
-    recognitionRestartTimer = null;
-    resetSpeechReplyTracking();
-    stopBargeInMonitor();
-    stopSpeechPlayback();
-    recognitionPausedForSpeech = false;
-    pendingSubmittedText = '';
-    pendingInputSnapshot = '';
-    recognitionBaseText = '';
-    input.value = '';
-    renderImagePreviews();
-    autoResize();
-    setHotMicEnabled(false);
-
-    if (shouldInterruptTmux) {
-      postJson(sessionApi('/api/send-keys/'), { key: 'Escape' })
-        .then(function() {
-          setTimeout(function() { fetchPane(true); }, 120);
-        })
-        .catch(function() {});
+  function pollBargeInMonitor() {
+    if (!shouldMonitorBargeIn()) {
+      stopBargeInMonitor();
+      return;
     }
+
+    var level = sampleBargeInLevel();
+    if (!level) {
+      bargeInVoiceFrames = 0;
+      return;
+    }
+
+    var floorWeight = speechPlaybackActive ? 0.04 : 0.08;
+    bargeInNoiseFloor = (bargeInNoiseFloor * (1 - floorWeight)) +
+      (Math.min(level, 0.08) * floorWeight);
+
+    var threshold = Math.max(
+      speechPlaybackActive ? BARGE_IN_TTS_MIN_LEVEL : BARGE_IN_MIN_LEVEL,
+      (speechPlaybackActive ? bargeInNoiseFloor * 2.9 : bargeInNoiseFloor * 2.3) +
+        (speechPlaybackActive ? 0.012 : 0.008)
+    );
+
+    if (level > threshold) {
+      bargeInVoiceFrames += 1;
+      if (bargeInVoiceFrames >= BARGE_IN_TRIGGER_FRAMES) {
+        bargeInVoiceFrames = 0;
+        triggerBargeIn();
+      }
+      return;
+    }
+
+    bargeInVoiceFrames = 0;
   }
 
   async function startBargeInMonitor() {
-    if (bargeRecognitionMode || !shouldMonitorBargeIn() || recognitionListening) {
+    if (bargeInMonitorTimer || !shouldMonitorBargeIn() || recognitionListening) {
       return;
     }
-    if (!recognition) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return;
     }
-    bargeRecognitionMode = true;
-    postMobileLog('barge recognition armed for keywords', 'mic');
+
     try {
-      recognition.start();
-    } catch (err) {
-      bargeRecognitionMode = false;
-    }
+      var stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      if (!shouldMonitorBargeIn() || recognitionListening) {
+        stream.getTracks().forEach(function(track) { track.stop(); });
+        return;
+      }
+
+      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) {
+        stream.getTracks().forEach(function(track) { track.stop(); });
+        return;
+      }
+
+      var context = new AudioContextCtor();
+      var analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.18;
+      var source = context.createMediaStreamSource(stream);
+      source.connect(analyser);
+      try {
+        await context.resume();
+      } catch (err) {}
+
+      bargeInStream = stream;
+      bargeInAudioContext = context;
+      bargeInSource = source;
+      bargeInAnalyser = analyser;
+      bargeInTimeData = new Uint8Array(analyser.fftSize);
+      bargeInNoiseFloor = 0.008;
+      bargeInVoiceFrames = 0;
+      bargeInMonitorTimer = setInterval(pollBargeInMonitor, BARGE_IN_MONITOR_INTERVAL);
+    } catch (err) {}
   }
 
   function scheduleBargeInMonitorStart(delay) {
@@ -1702,9 +1727,90 @@
     }, typeof delay === 'number' ? delay : 250);
   }
 
+  async function nudgeAudioCaptureRoute() {
+    if (!IS_SAFARI ||
+        !navigator.mediaDevices ||
+        typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      return false;
+    }
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1
+        }
+      });
+      postMobileLog('audio-capture nudge tracks=' + (stream.getAudioTracks ? stream.getAudioTracks().length : 0), 'mic');
+      try {
+        stream.getTracks().forEach(function(track) {
+          try {
+            track.stop();
+          } catch (err) {}
+        });
+      } catch (err) {}
+      return true;
+    } catch (err) {
+      postMobileLog('audio-capture nudge failed: ' + describeSpeechError(err), 'mic');
+      return false;
+    }
+  }
+
+  function scheduleAudioCaptureRecovery(delay) {
+    clearTimeout(audioCaptureRecoveryTimer);
+    audioCaptureRecoveryTimer = setTimeout(function() {
+      if (!hotMicEnabled || speechAwaitingReply || recognitionPausedForSpeech) {
+        audioCaptureRecoveryInFlight = false;
+        return;
+      }
+      if (audioCaptureRecoveryInFlight) {
+        return;
+      }
+      audioCaptureRecoveryInFlight = true;
+      stopBargeInMonitor();
+      clearTimeout(recognitionRestartTimer);
+      recognitionRestartTimer = null;
+      Promise.resolve()
+        .then(function() {
+          return nudgeAudioCaptureRoute();
+        })
+        .then(function() {
+          rebuildRecognition('after audio-capture');
+        })
+        .finally(function() {
+          audioCaptureRecoveryInFlight = false;
+          if (hotMicEnabled && !speechAwaitingReply && !recognitionPausedForSpeech) {
+            scheduleRecognitionRestart(220);
+          }
+        });
+    }, typeof delay === 'number' ? delay : 420);
+  }
+
+  function rebuildRecognition(reason) {
+    if (!SpeechRecognitionCtor) return false;
+    try {
+      if (recognition) {
+        recognition.onstart = null;
+        recognition.onresult = null;
+        recognition.onerror = null;
+        recognition.onend = null;
+        try {
+          recognition.abort();
+        } catch (err) {}
+      }
+    } catch (err) {}
+    recognition = null;
+    recognitionListening = false;
+    initMic();
+    if (reason) {
+      postMobileLog('recognition rebuilt ' + reason, 'mic');
+    }
+    return !!recognition;
+  }
+
   function startRecognition() {
     if (!recognition || recognitionListening) return;
-    bargeRecognitionMode = false;
     stopBargeInMonitor();
     clearTimeout(recognitionRestartTimer);
     recognitionRestartTimer = null;
@@ -1715,6 +1821,8 @@
 
   function stopRecognition() {
     if (!recognition || !recognitionListening) return;
+    clearTimeout(audioCaptureRecoveryTimer);
+    audioCaptureRecoveryTimer = null;
     try {
       recognition.stop();
     } catch (err) {}
@@ -1736,7 +1844,6 @@
     stopBargeInMonitor();
     speechPlaybackActive = false;
     recognitionPausedForSpeech = false;
-    setHotMicComposerView(true);
     scheduleRecognitionRestart(220);
   }
 
@@ -1754,7 +1861,18 @@
     speechPlaybackActive = false;
     speechPlaybackToken += 1;
     if (replyAudio) {
-      resetReplyAudioElement(true);
+      replyAudio.onended = null;
+      replyAudio.onerror = null;
+      try {
+        replyAudio.pause();
+      } catch (err) {}
+      try {
+        replyAudio.currentTime = 0;
+      } catch (err) {}
+      try {
+        replyAudio.removeAttribute('src');
+        replyAudio.load();
+      } catch (err) {}
     }
     if ('speechSynthesis' in window) {
       try {
@@ -1904,7 +2022,6 @@
   function startServerSpeechPlayback(url, activeToken, options) {
     var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
     var retryAfterUnlock = !!(options && options.retryAfterUnlock);
-    var serverDurationMs = options && options.durationMs ? Number(options.durationMs) : 0;
     if (!replyAudio) {
       debugSpeech('Audio element unavailable');
       speechPlaybackActive = false;
@@ -1916,121 +2033,56 @@
     function finish(message) {
       if (settled || activeToken !== speechPlaybackToken) return;
       settled = true;
-      resetReplyAudioElement(false);
+      replyAudio.onended = null;
+      replyAudio.onerror = null;
       debugSpeech(message);
       speechPlaybackActive = false;
       playNextSpeechChunk({ allowWithoutHotMic: allowWithoutHotMic });
     }
 
     var playbackUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now();
-    var playAttempted = false;
-    var playReadyTimer = null;
-    var playFinishTimer = null;
-    var playbackDurationMs = 0;
-
-    function clearPlaybackTimers() {
-      clearTimeout(playReadyTimer);
-      playReadyTimer = null;
-      clearTimeout(playFinishTimer);
-      playFinishTimer = null;
-    }
-
-    function schedulePlaybackFinishFallback() {
-      clearTimeout(playFinishTimer);
-      playFinishTimer = null;
-      var fallbackDurationMs = playbackDurationMs;
-      if (!fallbackDurationMs || !isFinite(fallbackDurationMs) || fallbackDurationMs <= 0) {
-        fallbackDurationMs = serverDurationMs;
-      }
-      if (!fallbackDurationMs || !isFinite(fallbackDurationMs) || fallbackDurationMs <= 0) {
-        fallbackDurationMs = 4000;
-      }
-      playFinishTimer = setTimeout(function() {
-        finish('Voice playback ended (timer)');
-      }, fallbackDurationMs + 600);
-    }
-
-    function attemptPlay() {
-      if (playAttempted || settled || activeToken !== speechPlaybackToken) return;
-      playAttempted = true;
-      clearTimeout(playReadyTimer);
-      playReadyTimer = null;
-      try {
-        var playPromise = replyAudio.play();
-        if (playPromise && typeof playPromise.then === 'function') {
-          playPromise.then(function() {
-            if (settled || activeToken !== speechPlaybackToken) return;
-            schedulePlaybackFinishFallback();
-            debugSpeech('Voice playback started');
-          }).catch(function(err) {
-            var errorText = describeSpeechError(err);
-            if (retryAfterUnlock &&
-                /NotAllowedError/i.test(errorText) &&
-                !replyAudioUnlocked &&
-                activeToken === speechPlaybackToken) {
-              unlockReplyAudio().then(function(unlocked) {
-                if (activeToken !== speechPlaybackToken) return;
-                if (unlocked) {
-                  startServerSpeechPlayback(url, activeToken, {
-                    allowWithoutHotMic: allowWithoutHotMic,
-                    retryAfterUnlock: false
-                  });
-                  return;
-                }
-                finish('Voice play blocked: ' + errorText);
-              });
-              return;
-            }
-            finish('Voice play blocked: ' + errorText);
-          });
-          return;
-        }
-        schedulePlaybackFinishFallback();
-        debugSpeech('Voice playback started');
-      } catch (err) {
-        finish('Voice play blocked: ' + describeSpeechError(err));
-      }
-    }
-
     replyAudio.onended = function() {
-      clearPlaybackTimers();
       finish('Voice playback ended');
     };
     replyAudio.onerror = function() {
-      clearPlaybackTimers();
       finish('Voice playback error: audio element error');
-    };
-    replyAudio.oncanplay = attemptPlay;
-    replyAudio.onloadedmetadata = function() {
-      playbackDurationMs = Math.round((replyAudio.duration || 0) * 1000);
-      if (replyAudio.readyState >= 1) {
-        attemptPlay();
-      }
     };
 
     try {
-      resetReplyAudioElement(true);
       replyAudio.src = playbackUrl;
       replyAudio.load();
-      if (replyAudio.readyState >= 2) {
-        attemptPlay();
-      } else {
-        playReadyTimer = setTimeout(function() {
-          attemptPlay();
-        }, 900);
+      var playPromise = replyAudio.play();
+      debugSpeech('Voice playback started');
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(function(err) {
+          var errorText = describeSpeechError(err);
+          if (retryAfterUnlock &&
+              /NotAllowedError/i.test(errorText) &&
+              !replyAudioUnlocked &&
+              activeToken === speechPlaybackToken) {
+            unlockReplyAudio().then(function(unlocked) {
+              if (activeToken !== speechPlaybackToken) return;
+              if (unlocked) {
+                startServerSpeechPlayback(url, activeToken, {
+                  allowWithoutHotMic: allowWithoutHotMic,
+                  retryAfterUnlock: false
+                });
+                return;
+              }
+              finish('Voice play blocked: ' + errorText);
+            });
+            return;
+          }
+          finish('Voice play blocked: ' + errorText);
+        });
       }
     } catch (err) {
-      clearPlaybackTimers();
       finish('Voice play blocked: ' + describeSpeechError(err));
     }
   }
 
   async function playNextSpeechChunk(options) {
     var allowWithoutHotMic = !!(options && options.allowWithoutHotMic);
-    if (speechHardStopped && !allowWithoutHotMic) {
-      stopSpeechPlayback();
-      return;
-    }
     if (!hotMicEnabled && !allowWithoutHotMic) {
       stopSpeechPlayback();
       return;
@@ -2057,7 +2109,6 @@
     }
 
     try {
-      postMobileLog('Voice text: ' + speechText.slice(0, 200), 'audio');
       debugSpeech('Generating voice audio');
       var asset = await requestServerSpeechAsset(speechText);
       if (activeToken !== speechPlaybackToken) {
@@ -2066,7 +2117,6 @@
       debugSpeech('Voice audio received');
       startServerSpeechPlayback(asset.url, activeToken, {
         allowWithoutHotMic: allowWithoutHotMic,
-        durationMs: asset.duration_ms,
         retryAfterUnlock: true
       });
     } catch (err) {
@@ -2081,7 +2131,6 @@
 
   function speakText(text) {
     if (!text) return;
-    if (speechHardStopped) return;
 
     var chunks = splitForSpeech(text);
     if (!chunks.length) return;
@@ -2116,12 +2165,6 @@
   async function checkForReplyContinuation() {
     clearTimeout(speechTimer);
     speechTimer = null;
-
-    if (speechHardStopped) {
-      resetSpeechReplyTracking();
-      resumeRecognitionAfterSpeech();
-      return;
-    }
 
     if (!hotMicEnabled || !speechAwaitingReply) {
       return;
@@ -2188,6 +2231,9 @@
     hotMicSendTimer = null;
     clearTimeout(recognitionRestartTimer);
     recognitionRestartTimer = null;
+    clearTimeout(audioCaptureRecoveryTimer);
+    audioCaptureRecoveryTimer = null;
+    audioCaptureRecoveryInFlight = false;
 
     if (enabled) {
       speechHardStopped = false;
@@ -2952,22 +2998,17 @@
 
     recognition.onstart = function() {
       suppressInputFocusAfterMicStop = false;
-      recognitionBaseText = hotMicAwaitingFreshUtterance ? '' : input.value;
+      recognitionBaseText = input.value;
       lastRecognitionResultAt = 0;
       setMicState(true);
-      if (bargeRecognitionMode) {
-        postMobileLog('barge recognition.onstart', 'mic');
-        showStatus('Listening for stop, cancel, wait, hold, pause, or quiet');
-        return;
-      }
-      if (hotMicEnabled) {
-        setHotMicComposerView(true);
-      }
       postMobileLog('recognition.onstart', 'mic');
       showStatus(hotMicEnabled ? 'Hot mic listening' : 'Listening…');
     };
 
     recognition.onresult = function(event) {
+      if (speechAwaitingReply) {
+        return;
+      }
       var transcript = '';
       var hasFinalResult = false;
       for (var i = event.resultIndex; i < event.results.length; i += 1) {
@@ -2975,58 +3016,14 @@
         hasFinalResult = hasFinalResult || !!event.results[i].isFinal;
       }
       transcript = transcript.trim();
-
-      if (bargeRecognitionMode) {
-        var keyword = extractBargeKeyword(transcript);
-        if (transcript) {
-          postMobileLog('barge recognition.onresult ' + transcript, 'mic');
-        }
-        if (keyword) {
-          postMobileLog('barge keyword detected: ' + keyword, 'mic');
-          if (keyword === 'stop') {
-            showStatus('Hot mic off');
-            stopHotMicFromBarge();
-          } else {
-            showStatus('Barge: ' + keyword);
-            triggerBargeIn();
-          }
-        }
-        return;
-      }
-
-      if (speechAwaitingReply) {
-        return;
-      }
-      if (hotMicEnabled && hotMicAwaitingFreshUtterance) {
-        if (Date.now() < hotMicIgnoreResultsUntil) {
-          if (transcript) {
-            postMobileLog('recognition.onresult ignored after barge ' + transcript, 'mic');
-          }
-          return;
-        }
-        hotMicAwaitingFreshUtterance = false;
-        hotMicIgnoreResultsUntil = 0;
-        recognitionBaseText = '';
-        input.value = '';
-      }
       if (transcript) {
+        clearTimeout(audioCaptureRecoveryTimer);
+        audioCaptureRecoveryTimer = null;
+        audioCaptureRecoveryInFlight = false;
         lastRecognitionResultAt = Date.now();
         postMobileLog('recognition.onresult ' + transcript, 'mic');
         showStatus('Heard: ' + transcript);
       }
-      if (hotMicEnabled && transcript) {
-        var pendingCommand = detectVoiceToolbarCommand(transcript);
-        if (pendingCommand) {
-          hotMicPendingVoiceCommand = pendingCommand;
-          input.value = '';
-          renderImagePreviews();
-          autoResize();
-          showStatus('Voice command ready: ' + pendingCommand.label);
-          scheduleHotMicSend();
-          return;
-        }
-      }
-      hotMicPendingVoiceCommand = null;
       input.value = mergeTranscriptWithBaseText(recognitionBaseText, transcript);
       if (hotMicEnabled) {
         setHotMicComposerView(true);
@@ -3045,15 +3042,6 @@
     recognition.onerror = function(event) {
       setMicState(false);
       var errorCode = event && event.error ? event.error : '';
-      if (bargeRecognitionMode) {
-        postMobileLog('barge recognition.onerror ' + (errorCode || 'unknown'), 'mic');
-        if (shouldMonitorBargeIn()) {
-          bargeRecognitionMode = false;
-          scheduleBargeInMonitorStart(220);
-          showStatus('Listening for stop, cancel, wait, hold, pause, or quiet');
-          return;
-        }
-      }
       postMobileLog('recognition.onerror ' + (errorCode || 'unknown'), 'mic');
       if (suppressInputFocusAfterMicStop) {
         showStatus('Hot mic off');
@@ -3068,6 +3056,11 @@
         if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
           setHotMicEnabled(false);
           showStatus('Hot mic unavailable');
+          return;
+        }
+        if (errorCode === 'audio-capture') {
+          showStatus('Hot mic recovering');
+          scheduleAudioCaptureRecovery(420);
           return;
         }
         if (!recognitionPausedForSpeech) {
@@ -3088,15 +3081,6 @@
 
     recognition.onend = function() {
       setMicState(false);
-      if (bargeRecognitionMode) {
-        postMobileLog('barge recognition.onend', 'mic');
-        bargeRecognitionMode = false;
-        if (shouldMonitorBargeIn()) {
-          scheduleBargeInMonitorStart(220);
-          showStatus('Listening for stop, cancel, wait, hold, pause, or quiet');
-        }
-        return;
-      }
       postMobileLog(
         'recognition.onend awaiting=' + speechAwaitingReply +
         ' paused=' + recognitionPausedForSpeech +
