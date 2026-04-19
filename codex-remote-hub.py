@@ -1303,6 +1303,74 @@ def _extract_message_text(content) -> str:
     return ""
 
 
+def _clean_thread_title(text: str) -> str:
+    """Turn a raw prompt/summary into a short thread label."""
+    if not isinstance(text, str):
+        return ""
+
+    def _normalize(line: str) -> str:
+        return re.sub(r"\s+", " ", line or "").strip(" \t-:*`#\"'")
+
+    def _is_usable(line: str) -> bool:
+        if not line or len(line) < 4:
+            return False
+        lowered = line.lower()
+        if lowered.startswith(("<environment_context>", "</environment_context>", "[image:", "http://", "https://", "file://")):
+            return False
+        if lowered.startswith((
+            "the user interrupted",
+            "any running unified exec processes",
+            "if any tools/commands were aborted",
+            "filesystem sandboxing",
+            "approval policy",
+            "you are codex",
+            "you are claude",
+        )):
+            return False
+        if line.startswith("<"):
+            return False
+        if line.startswith(("@/", "/")):
+            return False
+        if re.fullmatch(r"</?[\w:!-]+[^>]*>", line):
+            return False
+        if re.search(r"[{};]", line):
+            return False
+        if re.match(r"^[A-Za-z_][\w.-]*\s*:\s*(?:null|true|false|\d+|['\"[{(])", line):
+            return False
+        if re.match(r"^(?:const|let|var|function|return|import|export|body|\.[\w-]|#[\w-]|@media)\b", line):
+            return False
+        if any(token in line for token in ("=>", ".replace(", ".map(", ".filter(", ".forEach(", r"\x", "/g")):
+            return False
+        if len(line) <= 12 and line == line.upper() and " " not in line:
+            return False
+        if not re.search(r"[A-Za-z]", line):
+            return False
+        return True
+
+    lines = [_normalize(line) for line in text.splitlines()]
+    for line in lines:
+        if _is_usable(line):
+            return line[:96].rstrip(" .,;:-")
+
+    collapsed = re.sub(r"<[^>]+>", " ", text)
+    collapsed = re.sub(r"\[[^\]]+\]", " ", collapsed)
+    collapsed = re.sub(r"\b(?:const|let|var|function|return|import|export)\b[^.\n]{0,120}", " ", collapsed)
+    sentences = [_normalize(part) for part in re.split(r"(?<=[.!?])\s+|\n+", collapsed)]
+    for sentence in sentences:
+        if _is_usable(sentence):
+            return sentence[:96].rstrip(" .,;:-")
+    return ""
+
+
+def _best_thread_title(*candidates: Optional[str], fallback: str = "") -> str:
+    """Pick the first usable display title from the provided candidates."""
+    for candidate in candidates:
+        title = _clean_thread_title(candidate or "")
+        if title:
+            return title
+    return fallback
+
+
 def _find_git_root(path: str) -> str:
     """Return the nearest ancestor directory that owns a .git entry."""
     current = os.path.realpath(path or "")
@@ -1363,6 +1431,7 @@ def _read_claude_jsonl_summary(filepath: str) -> dict[str, Optional[str]]:
         "cwd": None,
         "first_prompt": None,
         "summary": None,
+        "assistant_summary": None,
         "modified": None,
         "message_count": None,
     }
@@ -1388,18 +1457,21 @@ def _read_claude_jsonl_summary(filepath: str) -> dict[str, Optional[str]]:
                     text = _extract_message_text(message.get("content"))
                     if text:
                         info["first_prompt"] = text
-                if payload.get("type") == "assistant" and not info["summary"]:
+                if payload.get("type") == "assistant" and not info["assistant_summary"]:
                     text = _extract_message_text(message.get("content"))
                     if text:
-                        info["summary"] = text
+                        info["assistant_summary"] = text
         stat = os.stat(filepath)
         info["modified"] = datetime.fromtimestamp(stat.st_mtime).isoformat()
     except OSError:
         return info
 
     info["message_count"] = message_count
-    if not info["summary"]:
-        info["summary"] = info["first_prompt"]
+    info["summary"] = _best_thread_title(
+        info.get("first_prompt"),
+        info.get("assistant_summary"),
+        fallback="",
+    )
     return info
 
 
@@ -1442,9 +1514,15 @@ def _discover_saved_claude_projects() -> list[dict]:
             if not isinstance(session_id, str) or not session_id:
                 continue
             project_path = item.get("projectPath") or project_path
+            title = _best_thread_title(
+                item.get("title"),
+                item.get("summary"),
+                item.get("firstPrompt"),
+                fallback=session_id,
+            )
             threads_by_id[session_id] = {
                 "session_id": session_id,
-                "summary": item.get("summary") or item.get("firstPrompt") or session_id,
+                "summary": title,
                 "first_prompt": item.get("firstPrompt") or "",
                 "project_path": item.get("projectPath") or project_path or "",
                 "message_count": item.get("messageCount") or 0,
@@ -1467,7 +1545,11 @@ def _discover_saved_claude_projects() -> list[dict]:
             inferred_path = summary.get("cwd") or project_path or ""
             threads_by_id[session_id] = {
                 "session_id": session_id,
-                "summary": summary.get("summary") or summary.get("first_prompt") or session_id,
+                "summary": _best_thread_title(
+                    summary.get("summary"),
+                    summary.get("first_prompt"),
+                    fallback=session_id,
+                ),
                 "first_prompt": summary.get("first_prompt") or "",
                 "project_path": inferred_path,
                 "message_count": summary.get("message_count") or 0,
@@ -1554,12 +1636,57 @@ def _read_codex_session_index() -> dict[str, dict]:
     return entries
 
 
-def _extract_codex_thread_name(session_id: str, session_meta: dict, index_entry: Optional[dict]) -> str:
+def _read_codex_jsonl_summary(filepath: str) -> dict[str, Optional[str]]:
+    """Extract a useful fallback title from a Codex session transcript."""
+    info: dict[str, Optional[str]] = {
+        "first_prompt": None,
+    }
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if payload.get("type") != "response_item":
+                    continue
+                message = payload.get("payload") or {}
+                if message.get("type") != "message" or message.get("role") != "user":
+                    continue
+                parts: list[str] = []
+                for item in message.get("content") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    text = item.get("text")
+                    if item.get("type") in {"input_text", "output_text"} and isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                prompt = " ".join(parts).strip()
+                title = _clean_thread_title(prompt)
+                if title and not prompt.lstrip().startswith("<environment_context>"):
+                    info["first_prompt"] = prompt
+                    break
+    except OSError:
+        return info
+    return info
+
+
+def _extract_codex_thread_name(
+    session_id: str,
+    session_meta: dict,
+    index_entry: Optional[dict],
+    fallback_prompt: Optional[str] = None,
+) -> str:
     """Resolve a human-readable Codex thread name."""
     if isinstance(index_entry, dict):
         name = index_entry.get("thread_name")
         if isinstance(name, str) and name.strip():
             return name.strip()
+    prompt_title = _best_thread_title(fallback_prompt)
+    if prompt_title:
+        return prompt_title
     cwd = session_meta.get("cwd")
     if isinstance(cwd, str) and cwd:
         return os.path.basename(cwd.rstrip(os.sep)) or session_id
@@ -1576,6 +1703,7 @@ def _discover_saved_codex_projects() -> list[dict]:
     projects_by_path: dict[str, dict] = {}
     for filepath in sorted(_glob.glob(os.path.join(sessions_root, "*", "*", "*", "*.jsonl")), reverse=True):
         session_meta = None
+        summary = None
         try:
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                 for _ in range(12):
@@ -1614,6 +1742,7 @@ def _discover_saved_codex_projects() -> list[dict]:
         })
 
         index_entry = index_entries.get(session_id, {})
+        summary = _read_codex_jsonl_summary(filepath)
         modified = ""
         updated_at = index_entry.get("updated_at") if isinstance(index_entry, dict) else None
         if isinstance(updated_at, str) and updated_at:
@@ -1625,8 +1754,13 @@ def _discover_saved_codex_projects() -> list[dict]:
 
         thread = {
             "session_id": session_id,
-            "summary": _extract_codex_thread_name(session_id, session_meta, index_entry),
-            "first_prompt": "",
+            "summary": _extract_codex_thread_name(
+                session_id,
+                session_meta,
+                index_entry,
+                summary.get("first_prompt") if isinstance(summary, dict) else None,
+            ),
+            "first_prompt": summary.get("first_prompt") if isinstance(summary, dict) else "",
             "project_path": key_path,
             "message_count": 0,
             "git_branch": session_meta.get("git_branch") or "",
